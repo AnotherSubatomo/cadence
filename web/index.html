@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<!--From: https://marketplace.canva.com/g5oRM/MAG5qbg5oRM/1/tl/canva-cute-cat-icon_-simple-white-outline-MAG5qbg5oRM.png-->
+	<link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAT4SURBVFhHvVdZLG5XFN5+4++veZ7u5UZiSKRC06YeJBIPHrx4ECIS4QFBSTTxyJM0bd1GdHihkUaqT6WJVsRUSUOruFKqqoYHqhQh5vmsfms5R/24buu6/5fsrL33WXuvtfbeazjqRfD39w9wcnL60sHBYR70q8DAQD/9061wc3XNA++ko6Pjj+7u7m/o0/dDZGSku729/W/oEjYkphhPxsbGviYM1rBzcXH5DJRMJpPwgv4dHBzsI1/vA1j8CQgVFBTQ8fExFRcXazx2dnb+QBiuwGKxvAtCcXFxtLKyQlVVVQbvU2H4v8BRP7azszsNDw+nw8NDYhwdHRGPYdn+I1/fIJ1VeXp6vg7eIx8fH1pcXBTe/f194jF4t59zYncDmteCUENDg2xooL6+3riKP3DX3+FqeiFkg+daWlo0nU1QWloqvDidHND/jtDQUDMELPK9b2xs6NtdYHV19fI9XG0pKSmkaVbyqbOzU76Bv7umpsaE/ovh5eX1yNHecRRdSk9P17eyxvr6Oi0vLwvd3Nykra0tOjs707/+i52dHcL1GEp8GxUV5SZCnge43BNYvoQuFRYWasbdvwzm5uYoKSnJUOKngIAAiwi7Dv3Yf0WXcFzWZ/mSODk5oZycHMMrvhCB12F2dv4QhPLz8x9UuIGFhQUNniUn4Wax5IpQA35+fpHscugSfJ+io6OpsrKStre39eVEzc3N1NPTY6Ucf7/Kw2hvb2dv0EfEawhuKIKNBq/Z4iCH/gVwLO+DUHl5udbY2CiBJyQkhDcTgePj43J8rq6uVi+9rKyMSkpK9NGFh8AQETI9PS1zra2tlJGRQbzvyMgIZWdny3ez2VwMqlRmZiau3v4vDw+Py4DDUW9tbU36DJ7Pzc29fBu9vb3yuFJTUykhIYEmJiaooqJCOz8/p6KiIo0N4HtnsCe0tbVpHR0dNDw8TAMDA2IMYsgzUcDb2/tNnsA1yIawXMMRiZZdXV23voe8vDyNLeV4YPAmJibeiAOMpqYmEXhbw8OP5ARSiRD7FNeg4uPjpcXExKiIiAiVlpbG+QC81jg9PVX9/f0Kb0UtLS2p2dlZlZWVpXBFOoc18E4U8oPCQ1RTU1MKAUrhJJi/kAV8Dh7q7u6+1dpXAX4LLBOyPzVh/Ji1hMV2TG2BsLAwoZD9hBXw5YGvrxCbAOFe4Q2xAv6cICQ0wi2Y2AR4vIYCZlbAnicx4HuxCeAtek8pVuCEO7u7uzZ7AwcHB6IEXPjAhKPY4Ul2E1vhiqw1VuB37k1OTsqMLcCxgIETmDUhJH7PAyQNmbQF+vr6hEL2MNcB3tDkyM3N7UZmexXgYhUuz0nrFBnx4h8DEYmLBKqurn7l0bC2tlZyA1zxaxHOQJkUjlPYRz6g0dFRnfXhMTg4yBURW3+EJBiji78AAlERCHHVwun1ocGZlVM+y4CschF6HciMH4FwHU91dXXa3t6evvz+mJmZ4fRtFCoaMmCNCNNxI/hAeAUCxXtYa8bPpUJprpKTkyVFBwUFcf3APBJOcW2yhoMKp2g8MIVCRtLu2NiYQoZVQ0NDHGUVip4/Yfk7MOobWXQX+LcMD/NjLNrEUI7teoPwy6Zbd6NhXoOiP3P5xVU35m7gzvCLKsdxfn7+bRQsb8HKGFgSiuaDZsHmLqCcR8SlQPcx3oTSqxjPw8d/wb/hD/hXvCPEKvUPgS44bPtnbpIAAAAASUVORK5CYII="/>
+	<title>cadence on da web</title>
+	<style>
+		body {
+			margin: 0;
+			height: 100vh;
+			display: grid;
+			place-items: center;
+			background: black;
+		}
+
+		canvas {
+			image-rendering: pixelated; /* Sharp edges for Chrome/Safari */
+			image-rendering: crisp-edges; /* For Firefox */
+		}
+
+		.debug {
+			font-size: 8px;
+			position: absolute;
+			top: 10px;
+			left: 10px;
+			color: white;
+			font-family:
+				'Roboto Mono',
+				'Courier New',
+				Courier,
+				monospace;
+		}
+
+		.settings {
+			font-size: 8px;
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			text-align: right;
+			color: white;
+			font-family:
+				'Roboto Mono',
+				'Courier New',
+				Courier,
+				monospace;
+		}
+
+		input, select, textarea, button {
+			font: inherit;
+			color: inherit;
+			outline: none;
+			border: 1px solid white;
+			padding: 3px;
+			border-radius: 4px;
+			background-color: transparent;
+		}
+
+		summary {
+			padding-bottom: 4px;
+		}
+	</style>
+</head>
+<body>
+	<div class="debug">
+		<p id="budget_widget">Frame budget consumed: 0%</p>
+	</div>
+
+	<div class="settings">
+		<details>
+			<summary>Resize canvas</summary>
+			<form id="resizer">
+				<input type="number" id="width" placeholder="Width">
+				<input type="number" id="height" placeholder="Height">
+				<button type="submit">Resize</button>
+			</form>
+		</details>
+	</div>
+
+	<canvas id="canvas">
+		<script>
+			canvas.style.width = "100vw";
+			canvas.style.height = "100vh";
+			canvas.style.objectFit = "contain";
+
+			// Handle user inputs
+			let delta_x = 0, delta_y = 0, dont_record_delta = true
+
+			canvas.addEventListener("click", async () => {
+				await canvas.requestPointerLock()
+			})
+
+			document.addEventListener('mousedown', (event) => {
+				if (event.button === 2) (dont_record_delta = false)
+			})
+
+			document.addEventListener('mouseup', (event) => {
+				if (event.button === 2) (dont_record_delta = true)
+			})
+
+			document.addEventListener('mousemove', (event) => {
+				if (dont_record_delta) return
+				delta_x = event.movementX || 0
+				delta_y = event.movementY || 0
+			})
+
+			let forward_move = false, back_move = false
+			let left_move = false, right_move = false
+			let up_move = false, down_move = false
+
+			document.addEventListener('keydown', (event) => {
+				const key = event.key.toUpperCase()
+				if      (key === 'W') (forward_move = true)
+				else if (key === 'S') (back_move = true)
+				else if (key === 'A') (left_move = true)
+				else if (key === 'D') (right_move = true)
+				else if (key === 'E') (up_move = true)
+				else if (key === 'Q') (down_move = true)
+			})
+
+			document.addEventListener('keyup', (event) => {
+				const key = event.key.toUpperCase()
+				if      (key === 'W') (forward_move = false)
+				else if (key === 'S') (back_move = false)
+				else if (key === 'A') (left_move = false)
+				else if (key === 'D') (right_move = false)
+				else if (key === 'E') (up_move = false)
+				else if (key === 'Q') (down_move = false)
+			})
+
+			function get_user_inputs() {
+				// Fetch mouse delta
+				const dx = delta_x
+				const dy = delta_y
+				// * Reset after reading so we don't keep
+				//  moving even when the mouse stops
+				delta_x = 0
+				delta_y = 0
+				// Calculate move direction
+				const right = (left_move ? 1 : 0) - (right_move ? 1 : 0)
+				const up = (up_move ? 1 : 0) - (down_move ? 1 : 0)
+				const forward = (forward_move ? 1 : 0) - (back_move ? 1 : 0)
+				return { "dx": dx, "dy": dy, "right": right, "up": up, "forward": forward }
+			}
+
+			// Open a websocket to the server port
+			const socket = new WebSocket('ws://localhost:8080');
+
+			function relay(relay_case, relay_content) {
+				relay_content.case = relay_case
+				socket.send(JSON.stringify(relay_content))
+			}
+
+			// Prepare canvas context
+			const ctx = canvas.getContext("2d");
+			// * temporarily set image-related data to some garbage value with a relevant type
+			let image_data = new ImageData(1, 1);
+			let image_memsize = 4;
+
+			socket.addEventListener('open', (event) => {
+				console.log("[Client]: Websocket opened!");
+			});
+
+			// Listen for messages from the server
+			socket.addEventListener('message', async (event) => {
+				const data = event.data;
+				const data_type = typeof data;
+
+				// All string messages are for sure to be encoded JSON.
+				if (data_type == "string") {
+					const json = JSON.parse(data);
+					const json_case = json.case;
+
+					if (json_case == "resize") {
+						canvas.width = json.width;
+						canvas.height = json.height;
+						image_data = new ImageData(json.width, json.height);
+						image_memsize = json.width * json.height * 4;
+
+					} else if (json_case == "debug") {
+						budget_widget.textContent = "Frame budget consumed: " + json.budget + "%";
+					}
+
+				} else if (data_type == "object") {
+					if (!(data instanceof Blob)) return;
+
+					// Send user input
+					relay("input", get_user_inputs());
+
+					// Convert the BLOB into a buffer
+					const buffer = (await (data).bytes()).subarray(0, image_memsize);
+					//console.log('[Client]: Received BLOB:', buffer);
+
+					// Wrap the buffer in a Uint8ClampedArray view
+					const pixel_array_view = new Uint8ClampedArray(buffer);
+					// Fast-copy the data into the existing ImageData buffer
+					image_data.data.set(pixel_array_view);
+					// Paint it onto the canvas context
+					ctx.putImageData(image_data, 0, 0);
+				}
+			});
+
+			socket.addEventListener('close', (event) => {
+				console.log("[Client]: Websocket closed!");
+			});
+
+			// Handle canvas resizes
+			resizer.addEventListener('submit', (event) => {
+				event.preventDefault();
+
+				const new_width = parseInt(document.getElementById('width').value, 10);
+				const new_height = parseInt(document.getElementById('height').value, 10);
+				if (!(new_width && new_height)) return;
+
+				// Relay change to Luau canvas
+				relay("resize", {"width": new_width, "height": new_height});
+			})
+		</script>
+	</canvas>
+</body>
+</html>

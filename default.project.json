@@ -1,0 +1,12 @@
+{
+	"name": "cadence-roblox",
+	"tree": {
+		"$className": "DataModel",
+		"ReplicatedFirst": {
+			"cadence-renderer": {
+				"$path": "Roblox",
+				"src": { "$path": "src" }
+			}
+		}
+	}
+}
