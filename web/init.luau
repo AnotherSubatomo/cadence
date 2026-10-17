@@ -4,8 +4,11 @@
 --!native
 
 type JS_InputPacket = {
+	x: number,
+	y: number,
 	dx: number,
 	dy: number,
+	mouse_states: number,
 	right: number,
 	up: number,
 	forward: number,
@@ -77,7 +80,13 @@ const function on_server_ws_message(ws: ServerSocket, message: string | buffer):
 	if json_case == "input" then
 		const packet = json_data :: JS_InputPacket
 		program.set_input(
+			vector.create(packet.x, packet.y),
 			vector.create(packet.dx, packet.dy),
+			vector.create(
+				bit32.btest(packet.mouse_states, 0b001) and 1 or 0,
+				bit32.btest(packet.mouse_states, 0b010) and 1 or 0,
+				bit32.btest(packet.mouse_states, 0b100) and 1 or 0
+			),
 			vector.create(packet.right, packet.up, packet.forward)
 		)
 	elseif json_case == "resize" then

@@ -16,6 +16,11 @@
 		}
 
 		canvas {
+			max-width: 100vw;
+			max-height: 100vh;
+			width: auto;
+			height: 100%;
+			object-fit: contain;
 			image-rendering: pixelated; /* Sharp edges for Chrome/Safari */
 			image-rendering: crisp-edges; /* For Firefox */
 		}
@@ -80,29 +85,47 @@
 
 	<canvas id="canvas">
 		<script>
-			canvas.style.width = "100vw";
-			canvas.style.height = "100vh";
-			canvas.style.objectFit = "contain";
 
 			// Handle user inputs
-			let delta_x = 0, delta_y = 0, dont_record_delta = true
+			let x = 0, y = 0, delta_x = 0, delta_y = 0, mouse_states = 0
 
-			canvas.addEventListener("click", async () => {
-				await canvas.requestPointerLock()
+			canvas.addEventListener('mousedown', (event) => {
+				if (event.button == 2) { canvas.requestPointerLock() }
+				mouse_states ^= 1 << event.button
 			})
 
-			document.addEventListener('mousedown', (event) => {
-				if (event.button === 2) (dont_record_delta = false)
+			canvas.addEventListener('mouseup', (event) => {
+				if (event.button == 2) { document.exitPointerLock() }
+				mouse_states ^= 1 << event.button
 			})
 
-			document.addEventListener('mouseup', (event) => {
-				if (event.button === 2) (dont_record_delta = true)
-			})
+			canvas.addEventListener('mousemove', (event) => {
+				// Get the bounding box of the canvas relative to the viewport
+				const rect = canvas.getBoundingClientRect()
 
-			document.addEventListener('mousemove', (event) => {
-				if (dont_record_delta) return
-				delta_x = event.movementX || 0
-				delta_y = event.movementY || 0
+				// Get client mouse position and pure deltas
+				const client_x = event.clientX || 0
+				const client_y = event.clientY || 0
+				const client_dx = event.movementX || 0
+				const client_dy = event.movementY || 0
+
+				// Get local coordinates within the canvas element (0 to CSS width/height)
+				const local_x = client_x - rect.left
+				const local_y = client_y - rect.top
+
+				// Normalize coordinates relative to the canvas CSS size (0.0 to 1.0)
+				const relative_x = local_x / rect.width
+				const relative_y = local_y / rect.height
+				
+				// Scale deltas linearly relative to how much the canvas is currently stretched
+				const relative_dx = client_dx / rect.width
+				const relative_dy = client_dy / rect.height
+
+				// Map to internal canvas resolution pixels (0 to canvas.width/height)
+				x = relative_x * canvas.width
+				y = relative_y * canvas.height
+				delta_x = relative_dx * canvas.width
+				delta_y = relative_dy * canvas.height
 			})
 
 			let forward_move = false, back_move = false
@@ -141,7 +164,14 @@
 				const right = (left_move ? 1 : 0) - (right_move ? 1 : 0)
 				const up = (up_move ? 1 : 0) - (down_move ? 1 : 0)
 				const forward = (forward_move ? 1 : 0) - (back_move ? 1 : 0)
-				return { "dx": dx, "dy": dy, "right": right, "up": up, "forward": forward }
+				return {
+					"x": x, "y": y,
+					"dx": dx, "dy": dy,
+					"mouse_states": mouse_states,
+					"right": right,
+					"up": up,
+					"forward": forward
+				}
 			}
 
 			// Open a websocket to the server port

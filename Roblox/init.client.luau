@@ -10,12 +10,12 @@ const New = Instance.new
 
 const DebugBuffer = require("@self/DebugBuffer")
 
-const program = require("./src")
+const program = require("@self/src")
 const max_resolution = program.max_resolution
 const frame = program.frame
 const set_input = program.set_input
 const set_view_resolution = program.set_view_resolution
-const get_frame_budget_consumed = program.get_frame_budget_consumed
+const get_debug_info = program.get_debug_info
 
 const THEME_COLOR = Color3.fromHex 'c86809'
 const THEME_PADDING = UDim.new(0, 4)
@@ -23,7 +23,19 @@ const THEME_PADDING_HALF = UDim.new(0, THEME_PADDING.Offset / 2)
 
 const EMPTY_STRING = ''
 
-const function GetMoveDirection(intrinsic_move_vector: Vector3, keys: {InputObject}): (vector)
+const function get_mouse_states(mouse_buttons: {InputObject}): (vector)
+	local left, middle, right = 0, 0, 0
+	for _, button in mouse_buttons do
+		const type = button.UserInputType
+		if type == Enum.UserInputType.MouseButton1 then left = 1
+		elseif type == Enum.UserInputType.MouseButton2 then right = 1
+		elseif type == Enum.UserInputType.MouseButton3 then middle = 1
+		end
+	end
+	return vector.create(left, middle, right)
+end
+
+const function get_move_direction(intrinsic_move_vector: Vector3, keys: {InputObject}): (vector)
 	local up_move = 0
 
 	for _, key in keys do
@@ -178,6 +190,27 @@ const function main()
 		Viewport.ImageRectSize = view_size
 	end
 
+	const function get_canvas_mouse_position(position: Vector2): (vector)
+		-- Get client mouse position
+		const client_x = position.X
+		const client_y = position.Y - 58
+
+		-- Get local coordinates within the viewport
+		const rect_position = Viewport.AbsolutePosition
+		const local_x = client_x - rect_position.X
+		const local_y = client_y - rect_position.Y
+
+		-- Normalize coordinates relative to the viewport size
+		const rect_size = Viewport.AbsoluteSize
+		const relative_x = local_x / rect_size.X
+		const relative_y = local_y / rect_size.Y
+
+		-- Map to internal canvas resolution pixels (0 to canvas.width/height)
+		const x = relative_x * view_size.X
+		const y = relative_y * view_size.Y
+		return vector.create(x, y)
+	end
+
 	const DebugMenu = ThemeText(New 'TextLabel')
 	Snap(DebugMenu, Vector2.new(0, 1), 20)
 	DebugMenu.TextXAlignment = Enum.TextXAlignment.Right
@@ -193,19 +226,27 @@ const function main()
 	const ImageContent = Content.fromObject(Image)
 
 	const function render(delta: number): ()
+		const mouse_location = UserInput:GetMouseLocation()
 		const mouse_delta = (UserInput:GetMouseDelta() :: any) :: vector
+
+		const mouse_buttons_pressed = UserInput:GetMouseButtonsPressed()
 		const client_move_vector = ClientControls:GetMoveVector()
 		const keys_pressed = UserInput:GetKeysPressed()
-		const move_direction = GetMoveDirection(client_move_vector, keys_pressed)
-		set_input(mouse_delta, move_direction)
+
+		const mouse_position = get_canvas_mouse_position(mouse_location)
+		const mouse_states = get_mouse_states(mouse_buttons_pressed)
+		const move_direction = get_move_direction(client_move_vector, keys_pressed)
+
+		set_input(mouse_position, mouse_delta, mouse_states, move_direction)
 
 		const ImageBuffer = frame(delta)
 		buffer.copy(write_buffer, 0, ImageBuffer, 0, write_buffer_size)
 		Image:WritePixelsBuffer(Vector2.zero, view_size, write_buffer)
 
-		const budget = get_frame_budget_consumed() * 1000 // 1 / 1000
+		const debug_info = get_debug_info()
+		const budget = debug_info.budget_consumed_percent * 1000 // 1 / 1000
 
-		DebugBuffer.write('Frame budget consumed (%)', `<b>{budget}</b>`)
+		DebugBuffer.write('Frame budget consumed (%)',' <b>' .. budget .. '</b>')
 		DebugMenu.Text = DebugBuffer.flush()
 	end
 
