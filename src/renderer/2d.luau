@@ -150,6 +150,9 @@ const PORTFOLIO6x8: u52_bitmap_font = {
 	}
 }
 
+const EPSILON = 1e-12
+const F32_INF = 0x7F800000 -- IEEE 754's bit patterns for f32's positive infinity
+
 const iterate_codes = utf8.codes ''
 
 -- Reads the bit state from a bitmap at a given coordinate (0-based).
@@ -162,31 +165,72 @@ const function sample_bitmap(bitmap: number, x: number, y: number, row_width: nu
 	return bit32.band(bit32.rshift(bitmap, offset), 0b1)
 end
 
--- Draws a simple horizontal line, used by `circle()`, design to be automatically inlined by the compiler.
-const function horizontal_line(image: buffer, color: number, left_x: number, right_x: number, offset_y: number): ()
-	for offset = offset_y + (left_x * 4), offset_y + (right_x * 4), 4 do
-		buffer.writeu32(image, offset, color)
-	end
-end
-
-return function (_image: buffer, max_resolution: vector, view_resolution: vector?)
+return function (image: buffer, w: buffer, max_resolution: vector, view_resolution: vector?)
 	const IMAGE_MEMSIZE = max_resolution.x * max_resolution.y * 4
-	if buffer.len(_image) ~= IMAGE_MEMSIZE then
+	if buffer.len(image) ~= IMAGE_MEMSIZE then
 		error "The given image buffer's size must be equal to the product of the given maximum resolution's `x` and `y` times 4."
 	end
 
-	const IMAGE = _image
+	const IMAGE = image
+	const W = w
+
+	-- View settings
 	local VIEW_RESOLUTION = view_resolution or max_resolution
 	local VIEW_WIDTH = VIEW_RESOLUTION.x
 	local VIEW_HEIGHT = VIEW_RESOLUTION.y
 	local VIEW_STRIDE = VIEW_WIDTH * 4
 
-	local CHAR_WIDTH = PORTFOLIO6x8.width
-	local CHAR_HEIGHT = PORTFOLIO6x8.height
-	local CHAR_PADDING = PORTFOLIO6x8.padding
-
+	-- Style settings
 	local STYLE_COLOR = 0xFF000000
+	local STYLE_THICKNESS = 1
 	local STYLE_TEXT_FONT = PORTFOLIO6x8
+
+	-- Font settings
+	local CHAR_WIDTH = STYLE_TEXT_FONT.width
+	local CHAR_HEIGHT = STYLE_TEXT_FONT.height
+	local CHAR_PADDING = STYLE_TEXT_FONT.padding
+
+	-- Draws a vertical span at column x, covering rows `start_y` through `end_y` inclusive.
+	const function draw_vertical_span(x: number, start_y: number, end_y: number): ()
+		const x_byte = x * 4
+		local offset = start_y * VIEW_STRIDE + x_byte
+		for _ = start_y, end_y do
+			buffer.writeu32(IMAGE, offset, STYLE_COLOR)
+			buffer.writeu32(W, offset, F32_INF)
+			offset += VIEW_STRIDE
+		end
+	end
+
+	-- Draws a horizontal span at row y, covering columns `left_x` through `right_x` inclusive.
+	const function draw_horizontal_span(y: number, left_x: number, right_x: number): ()
+		const row_offset = y * VIEW_STRIDE
+		const start_offset = row_offset + left_x * 4
+		const end_offset   = row_offset + right_x * 4
+		for offset = start_offset, end_offset, 4 do
+			buffer.writeu32(IMAGE, offset, STYLE_COLOR)
+			buffer.writeu32(W, offset, F32_INF)
+		end
+	end
+
+	const function SET_VIEW_RESOLUTION(view_resolution: vector): ()
+		const view_width = view_resolution.x
+		const view_height = view_resolution.y
+
+		if view_width < 0 or view_height < 0 then
+			error "Invalid view resolution"
+		end
+		if view_width > max_resolution.x then
+			error "New view width cannot be greater than the max width"
+		end
+		if view_height > max_resolution.y then
+			error "New view height cannot be greater than the max height"
+		end
+
+		VIEW_RESOLUTION = view_resolution
+		VIEW_WIDTH = view_width
+		VIEW_HEIGHT = view_height
+		VIEW_STRIDE = VIEW_WIDTH * 4
+	end
 
 	const function GET_TEXT_SIZE(text: string): (number, number)
 		const text_length = utf8.len(text) or 1
@@ -217,80 +261,51 @@ return function (_image: buffer, max_resolution: vector, view_resolution: vector
 		CHAR_PADDING = ((font.padding / font_height) * text_size + 0.5) // 1
 	end
 
-	-- Draws a line.
-	-- * Thickness is axis-aligned, not perfectly perpendicular, looks slightly "boxy" at steep angles.
-	const function LINE(points: {vector}, thickness: number, dash_size: number, gap_size: number): ()
-		if thickness == 0 or dash_size == 0 then return end
-
-		const pattern_size = dash_size + gap_size
-		local pattern_pos = 0
-
+	-- Draws a polyline from the given sequence of points.
+	const function LINE(...: vector): ()
+		const points = { ... }
 		for i = 1, #points - 1 do
-			const a = points[i]
-			const b = points[i + 1]
+			const p1 = points[i]
+			const p2 = points[i + 1]
+			const x1, y1 = p1.x, p1.y
+			const x2, y2 = p2.x, p2.y
 
-			local x0 = a.x // 1
-			local y0 = a.y // 1
-			const x1 = b.x // 1
-			const y1 = b.y // 1
+			const dx = x2 - x1
+			const dy = y2 - y1
+			const len = math.sqrt(dx * dx + dy * dy)
+			if len < EPSILON then continue end
 
-			const dx = math.abs(x1 - x0)
-			const dy = math.abs(y1 - y0)
+			const half_thick = STYLE_THICKNESS / 2
 
-			const sx = (x0 < x1) and 1 or -1
-			const sy = (y0 < y1) and 1 or -1
+			if math.abs(dx) >= math.abs(dy) then
+				-- Shallow line: one vertical span per integer x.
+				const x_start = math.min(x1, x2)
+				const x_end = math.max(x1, x2)
+				const span = half_thick * math.abs(dx / len)
 
-			local err = dx - dy
-			const half = thickness // 2
-
-			-- Decide major axis once
-			const horizontal_major = dx >= dy
-
-			while true do
-				-- dash check
-				if pattern_pos < dash_size then
-					if horizontal_major then
-						-- vertical thickness (column span)
-						const x = x0
-						const y_start = y0 - half
-						const y_end = y0 + half
-
-						local offset = y_start * VIEW_STRIDE + x * 4
-						for y = y_start, y_end do
-							buffer.writeu32(IMAGE, offset, STYLE_COLOR)
-							offset += VIEW_STRIDE
-						end
-					else
-						-- horizontal thickness (row span)
-						const y = y0
-						const x_start = x0 - half
-						const x_end = x0 + half
-
-						local offset = y * VIEW_STRIDE + x_start * 4
-						for x = x_start, x_end do
-							buffer.writeu32(IMAGE, offset, STYLE_COLOR)
-							offset += 4
-						end
+				if math.abs(dx) < EPSILON then
+					const y_start = (y1 - span) // 1
+					const y_end = (y1 + span) // 1
+					for x = x_start, x_end do
+						draw_vertical_span(x, y_start, y_end)
+					end
+				else
+					for x = x_start, x_end do
+						const t = (x - x1) / dx
+						const cy = y1 + t * dy
+						draw_vertical_span(x, (cy - span) // 1, (cy + span) // 1)
 					end
 				end
+			else
+				-- Steep line: one horizontal span per integer y.
+				const y_start = math.min(y1, y2)
+				const y_end = math.max(y1, y2)
+				const span = half_thick * math.abs(dy / len)
 
-				pattern_pos += 1
-				if pattern_pos >= pattern_size then
-					pattern_pos = 0
-				end
-
-				if x0 == x1 and y0 == y1 then break end
-
-				const e2 = err + err
-
-				if e2 > -dy then
-					err -= dy
-					x0 += sx
-				end
-
-				if e2 < dx then
-					err += dx
-					y0 += sy
+				for y = y_start, y_end do
+					const t = (y - y1) / dy
+					const cx = x1 + t * dx
+					draw_horizontal_span(y, (cx - span) // 1, (cx + span) // 1)
 				end
 			end
 		end
@@ -363,6 +378,7 @@ return function (_image: buffer, max_resolution: vector, view_resolution: vector
 			-- Fill pixels across scanline
 			for _ = x_start, x_end do
 				buffer.writeu32(IMAGE, offset, STYLE_COLOR)
+				buffer.writeu32(W, offset, F32_INF)
 				offset += 4
 			end
 
@@ -393,6 +409,7 @@ return function (_image: buffer, max_resolution: vector, view_resolution: vector
 			-- Fill pixels across scanline
 			for _ = x_start, x_end do
 				buffer.writeu32(IMAGE, offset, STYLE_COLOR)
+				buffer.writeu32(W, offset, F32_INF)
 				offset += 4
 			end
 
@@ -408,12 +425,14 @@ return function (_image: buffer, max_resolution: vector, view_resolution: vector
 
 		for offset_x = 0, size_x_stride - 4, 4 do
 			buffer.writeu32(IMAGE, init_offset + offset_x, STYLE_COLOR)
+			buffer.writeu32(W, init_offset + offset_x, F32_INF)
 		end
 
 		local write_offset = init_offset + VIEW_STRIDE
 
 		for i = 1, size.y - 1 do
 			buffer.copy(IMAGE, write_offset, IMAGE, init_offset, size_x_stride)
+			buffer.copy(W, write_offset, W, init_offset, size_x_stride)
 			write_offset += VIEW_STRIDE
 		end
 	end
@@ -431,10 +450,10 @@ return function (_image: buffer, max_resolution: vector, view_resolution: vector
 			const cx_nx = cx - x
 			const cx_ny = cx - y
 
-			horizontal_line(IMAGE, STYLE_COLOR, cx_nx, cx_x, (cy + y) * VIEW_STRIDE)
-			horizontal_line(IMAGE, STYLE_COLOR, cx_nx, cx_x, (cy - y) * VIEW_STRIDE)
-			horizontal_line(IMAGE, STYLE_COLOR, cx_ny, cx_y, (cy + x) * VIEW_STRIDE)
-			horizontal_line(IMAGE, STYLE_COLOR, cx_ny, cx_y, (cy - x) * VIEW_STRIDE)
+			draw_horizontal_span((cy + y), cx_nx, cx_x)
+			draw_horizontal_span((cy - y), cx_nx, cx_x)
+			draw_horizontal_span((cy + x), cx_ny, cx_y)
+			draw_horizontal_span((cy - x), cx_ny, cx_y)
 
 			y += 1
 
@@ -510,7 +529,9 @@ return function (_image: buffer, max_resolution: vector, view_resolution: vector
 
 					if final_color ~= 0 then
 						const offset_x = (char_bound_x - x) * 4
-						buffer.writeu32(IMAGE, write_offset + offset_x, final_color)
+						const offset = write_offset + offset_x
+						buffer.writeu32(IMAGE, offset, final_color)
+						buffer.writeu32(W, offset, F32_INF)
 					end
 				end
 
@@ -528,6 +549,7 @@ return function (_image: buffer, max_resolution: vector, view_resolution: vector
 		setColor = SET_COLOR,
 		setFont = SET_FONT,
 		setTextSize = SET_TEXT_SIZE,
+		setViewResolution = SET_VIEW_RESOLUTION,
 
 		line = LINE,
 		triangle = TRIANGLE,
