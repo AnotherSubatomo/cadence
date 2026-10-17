@@ -11,8 +11,16 @@ return function (max_resolution: vector, view_resolution: vector?)
 	const IMAGE = buffer.create(IMAGE_MEMSIZE)
 	const W = buffer.create(IMAGE_MEMSIZE)
 
+	const CANVAS = render2d_init(IMAGE, W, max_resolution, view_resolution)
+	const SCENE = render3d_init(IMAGE, W, max_resolution, view_resolution)
+
 	const function GET_IMAGE_BUFFER(): (buffer)
 		return IMAGE
+	end
+
+	const function SET_VIEW_RESOLUTION(view_resolution: vector): ()
+		CANVAS.setViewResolution(view_resolution)
+		SCENE.setViewResolution(view_resolution)
 	end
 
 	const function CLEAR(): ()
@@ -21,9 +29,10 @@ return function (max_resolution: vector, view_resolution: vector?)
 	end
 
 	return {
-		canvas = render2d_init(IMAGE, max_resolution, view_resolution),
-		scene = render3d_init(IMAGE, W, max_resolution, view_resolution),
+		canvas = CANVAS,
+		scene = SCENE,
 		
+		setViewResolution = SET_VIEW_RESOLUTION,
 		getImageBuffer = GET_IMAGE_BUFFER,
 		clear = CLEAR,
 	}
