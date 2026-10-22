@@ -14,7 +14,7 @@ const program = require("@self/src")
 const max_resolution = program.max_resolution
 const frame = program.frame
 const set_input = program.set_input
-const set_view_resolution = program.set_view_resolution
+const set_render_resolution = program.set_render_resolution
 const get_debug_info = program.get_debug_info
 
 const THEME_COLOR = Color3.fromHex 'c86809'
@@ -181,7 +181,7 @@ const function main()
 		const height = tonumber(height_str)
 		if not width or not height then return end
 
-		set_view_resolution(vector.create(width, height))
+		set_render_resolution(vector.create(width, height))
 
 		view_size = Vector2.new(width, height)
 		write_buffer_size = view_size.X * view_size.Y * 4

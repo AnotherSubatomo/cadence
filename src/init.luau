@@ -84,8 +84,22 @@ const function sync_ui_render(): ()
 	ui.finish()
 end
 
+const SUBDIVISIONS = vector.create(3, 3)
+
 const function sync_scene_render(): ()
-	renderer.scene.render()
+	const render_resolution = renderer.scene.getRenderResolution()
+	renderer.scene.setViewPosition(vector.zero)
+
+	const SUBSIZE = render_resolution / SUBDIVISIONS // 1
+	renderer.scene.setViewResolution(SUBSIZE)
+
+	for y = 0, SUBDIVISIONS.y - 1 do
+		for x = 0, SUBDIVISIONS.x - 1 do
+			const position = vector.create(x, y) * SUBSIZE
+			renderer.scene.setViewPosition(position, SUBSIZE)
+			renderer.scene.render()
+		end
+	end
 end
 
 const function FRAME(delta: number): (buffer)
@@ -122,6 +136,6 @@ return {
 	max_resolution = MAX_RESOLUTION,
 	frame = FRAME,
 	set_input = SET_INPUT,
-	set_view_resolution = renderer.setViewResolution,
+	set_render_resolution = renderer.setRenderResolution,
 	get_debug_info = GET_DEBUG_INFO, 
 }

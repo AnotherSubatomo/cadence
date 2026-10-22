@@ -91,7 +91,7 @@ const function on_server_ws_message(ws: ServerSocket, message: string | buffer):
 		)
 	elseif json_case == "resize" then
 		const packet = json_data :: JS_ResizePacket
-		program.set_view_resolution(vector.create(packet.width, packet.height))
+		program.set_render_resolution(vector.create(packet.width, packet.height))
 		ws_client_resize(ws, packet.width, packet.height)
 		-- ^ send it back to validate resize request
 	end

@@ -19,28 +19,33 @@ type function nullable(t: type): (type)
 	return t
 end
 
+type ABGR = number
+
 -- Visual appearance of every widget.
 export type Style = {
 	font_size: number,
 	padding_x: number,
 	padding_y: number,
 	spacing: number,
-	widget_height: number,
-	color_widget: number,
-	color_widget_hot: number,
-	color_widget_active: number,
-	color_border: number,
-	color_text: number,
+	color_window: ABGR,
+	color_frame: ABGR,
+	color_frame_hot: ABGR,
+	color_frame_active: ABGR,
+	color_border: ABGR,
+	color_text_title: ABGR,
+	color_text: ABGR,
+	color_text_disabled: ABGR,
 }
 
 -- Drawing interface the IMGUI library depends on.
 export type Renderer = {
-	getTextSize: (text: string) -> (number, number),
-	setColor: (color: number) -> (),
+	getTextBounds: (text: string) -> (number, number),
+	setColor: (color: ABGR) -> (),
 	setTextSize: (size: number) -> (),
-	line: (...vector) -> (),
-	rectangle: (vector, vector) -> (),
-	text: (vector, string) -> (),
+	setLineThickness: (line_thickness: number) -> (),
+	line: (points: {number}) -> (),
+	rectangle: (px: number, py: number, sx: number, sy: number) -> (),
+	text: (px: number, py: number, text: string) -> (),
 }
 
 -- Layout state saved while inside a group.
@@ -61,12 +66,16 @@ const DEFAULT_STYLE: Style = {
 	padding_x = 3,
 	padding_y = 3,
 	spacing = 3,
-	widget_height = 12,
-	color_widget = 0xFF3C3C3C,
-	color_widget_hot = 0xFF4E4E4E,
-	color_widget_active = 0xFF5F5F5F,
-	color_border = 0xFF808080,
-	color_text = 0xFFFFFFFF,
+	color_window = 0xFF4D00FF,
+	color_frame = 0xFFAACCFF,
+	color_frame_hot = 0xFF4E4E4E,
+	color_frame_active = 0xFF5F5F5F,
+	color_border = 0xFF4D00FF,
+	color_text_title = 0xFFAACCFF,
+	color_text = 0xFF522B1D,
+	color_text_disabled = 0xFF53257E,
+	color_icon_enabled = 0xFFA877FF,
+	color_icon_disabled = 0xFF00A3FF,
 }
 
 const DEBUG_INFO_LINE = 'l'
@@ -162,26 +171,26 @@ return function(draw: Renderer)
 	-- Measures the given text at the current font size.
 	const function measure(text: string): (number, number)
 		draw.setTextSize(style.font_size)
-		return draw.getTextSize(text)
+		return draw.getTextBounds(text)
 	end
 
 	-- Draws text using the current text color and font size.
 	const function draw_text(text: string, x: number, y: number): ()
 		draw.setColor(style.color_text)
 		draw.setTextSize(style.font_size)
-		draw.text(vector.create(x, y), text)
+		draw.text(x, y, text)
 	end
 
 	-- Draws a one pixel outline around the given rectangle.
-	const function outline(x: number, y: number, width: number, height: number): ()
+	const function draw_border(x: number, y: number, width: number, height: number): ()
 		draw.setColor(style.color_border)
-		draw.line(
-			vector.create(x, y),
-			vector.create(x + width - 1, y),
-			vector.create(x + width - 1, y + height - 1),
-			vector.create(x, y + height - 1),
-			vector.create(x, y)
-		)
+		draw.line {
+			x, y,
+			x + width - 1, y,
+			x + width - 1, y + height - 1,
+			x, y + height - 1,
+			x, y
+		}
 	end
 
 	-- Advances the layout cursor and returns the reserved top-left corner.
@@ -327,17 +336,17 @@ return function(draw: Renderer)
 		const w = width or 160
 		const x, y = reserve_space(w, 1)
 		draw.setColor(style.color_border)
-		draw.line(
-			vector.create(x, y),
-			vector.create(x + w, y)
-		)
+		draw.line {
+			x, y,
+			x + w, y
+		}
 	end
 
 	-- Draws a button; returns true when it was clicked this frame.
-	const function BUTTON(text: string, width: number?, height: number?): (boolean)
+	const function BUTTON(text: string, width: number?): (boolean)
 		const text_width, text_height = measure(text)
-		const w = (width or (text_width + style.padding_x * 2)) // 1
-		const h = (height or style.widget_height) // 1
+		const w = (width or text_width + style.padding_x * style.padding_x) // 1
+		const h = style.font_size + style.padding_y * style.padding_y
 		const x, y = reserve_space(w, h)
 
 		const id = make_id()
@@ -358,26 +367,26 @@ return function(draw: Renderer)
 			active_id = id
 		end
 
-		local fill = style.color_widget
+		local fill = style.color_frame
 		if active_id == id then
-			fill = style.color_widget_active
+			fill = style.color_frame_active
 		elseif hot_id == id then
-			fill = style.color_widget_hot
+			fill = style.color_frame_hot
 		end
 
 		draw.setColor(fill)
-		draw.rectangle(vector.create(x, y), vector.create(w, h))
-		outline(x, y, w, h)
+		draw.rectangle(x, y, w, h)
+		draw_border(x, y, w, h)
 		draw_text(text, x + (w - text_width) // 2, y + (h - text_height) // 2)
 		return clicked
 	end
 
 	-- Draws a checkbox; returns the new value and whether it changed.
 	const function CHECKBOX(text: string, value: boolean): (boolean, boolean)
-		const box = (style.widget_height - 4) // 1
 		const text_width, text_height = measure(text)
+		const box = text_height
 		const w = box + style.spacing + text_width
-		const h = style.widget_height
+		const h = style.font_size + style.padding_y * style.padding_y
 		const x, y = reserve_space(w, h)
 
 		const id = make_id()
@@ -401,24 +410,24 @@ return function(draw: Renderer)
 		end
 
 		const box_y = y + (h - box) // 2
-		local fill = style.color_widget
+		local fill = style.color_frame
 		if active_id == id then
-			fill = style.color_widget_active
+			fill = style.color_frame_active
 		elseif hot_id == id then
-			fill = style.color_widget_hot
+			fill = style.color_frame_hot
 		end
 
 		draw.setColor(fill)
-		draw.rectangle(vector.create(x, box_y), vector.create(box, box))
-		outline(x, box_y, box, box)
+		draw.rectangle(x, box_y, box, box)
+		draw_border(x, box_y, box, box)
 
 		if new_value then
 			draw.setColor(style.color_text)
-			draw.line(
-				vector.create(x + 2, box_y + box // 2),
-				vector.create(x + box // 2, box_y + box - 3),
-				vector.create(x + box - 2, box_y + 2)
-			)
+			draw.line {
+				x + 2, box_y + box // 2,
+				x + box // 2, box_y + box - 3,
+				x + box - 2, box_y + 2
+			}
 		end
 
 		draw_text(text, x + box + style.spacing, y + (h - text_height) // 2)
@@ -428,7 +437,7 @@ return function(draw: Renderer)
 	-- Draws a horizontal slider; returns the new value and whether it changed.
 	const function SLIDER(text: string, value: number, min: number, max: number, width: number?): (number, boolean)
 		const w = (width or 160) // 1
-		const h = style.widget_height
+		const h = style.font_size + style.padding_y * style.padding_y
 		const x, y = reserve_space(w, h)
 
 		const id = make_id()
@@ -454,14 +463,14 @@ return function(draw: Renderer)
 			active_id = id
 		end
 
-		draw.setColor(style.color_widget)
-		draw.rectangle(vector.create(x, y), vector.create(w, h))
+		draw.setColor(style.color_frame)
+		draw.rectangle(x, y, w, h)
 
 		const t = math.clamp((new_value - min) / (max - min), 0, 1)
 		const filled_w = math.max(1, (t * w) // 1)
-		draw.setColor(style.color_widget_active)
-		draw.rectangle(vector.create(x, y), vector.create(filled_w, h))
-		outline(x, y, w, h)
+		draw.setColor(style.color_frame_active)
+		draw.rectangle(x, y, filled_w, h)
+		draw_border(x, y, w, h)
 
 		const label_text = string.format("%s: %.2f", text, new_value)
 		const text_width, text_height = measure(label_text)
@@ -472,17 +481,17 @@ return function(draw: Renderer)
 	-- Draws a progress bar reflecting the given value.
 	const function PROGRESS_BAR(value: number, min: number, max: number, width: number?): ()
 		const w = (width or 160) // 1
-		const h = style.widget_height
+		const h = style.font_size + style.padding_y * style.padding_y
 		const x, y = reserve_space(w, h)
 
-		draw.setColor(style.color_widget)
-		draw.rectangle(vector.create(x, y), vector.create(w, h))
+		draw.setColor(style.color_frame)
+		draw.rectangle(x, y, w, h)
 
 		const t = math.clamp((value - min) / (max - min), 0, 1)
 		const filled_w = math.max(1, (t * w) // 1)
-		draw.setColor(style.color_widget_active)
-		draw.rectangle(vector.create(x, y), vector.create(filled_w, h))
-		outline(x, y, w, h)
+		draw.setColor(style.color_frame_active)
+		draw.rectangle(x, y, filled_w, h)
+		draw_border(x, y, w, h)
 
 		const label_text = string.format("%d%%", math.floor(t * 100 + 0.5))
 		const text_width, text_height = measure(label_text)
@@ -491,9 +500,9 @@ return function(draw: Renderer)
 
 	-- Draws a filled panel with an outline.
 	const function PANEL(x: number, y: number, width: number, height: number): ()
-		draw.setColor(style.color_widget)
-		draw.rectangle(vector.create(x, y), vector.create(width, height))
-		outline(x, y, width, height)
+		draw.setColor(style.color_frame)
+		draw.rectangle(x, y, width, height)
+		draw_border(x, y, width, height)
 	end
 
 	return {
