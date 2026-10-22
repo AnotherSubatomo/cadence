@@ -18,9 +18,9 @@ return function (max_resolution: vector, view_resolution: vector?)
 		return IMAGE
 	end
 
-	const function SET_VIEW_RESOLUTION(view_resolution: vector): ()
-		CANVAS.setViewResolution(view_resolution)
-		SCENE.setViewResolution(view_resolution)
+	const function SET_RENDER_RESOLUTION(render_resolution: vector): ()
+		CANVAS.setRenderResolution(render_resolution)
+		SCENE.setRenderResolution(render_resolution)
 	end
 
 	const function CLEAR(): ()
@@ -29,11 +29,11 @@ return function (max_resolution: vector, view_resolution: vector?)
 	end
 
 	return {
-		canvas = CANVAS,
-		scene = SCENE,
+		canvas = CANVAS;
+		scene = SCENE;
 		
-		setViewResolution = SET_VIEW_RESOLUTION,
-		getImageBuffer = GET_IMAGE_BUFFER,
-		clear = CLEAR,
+		setRenderResolution = SET_RENDER_RESOLUTION;
+		getImageBuffer = GET_IMAGE_BUFFER;
+		clear = CLEAR;
 	}
 end

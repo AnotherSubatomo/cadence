@@ -165,7 +165,7 @@ const function sample_bitmap(bitmap: number, x: number, y: number, row_width: nu
 	return bit32.band(bit32.rshift(bitmap, offset), 0b1)
 end
 
-return function (image: buffer, w: buffer, max_resolution: vector, view_resolution: vector?)
+return function (image: buffer, w: buffer, max_resolution: vector, render_resolution: vector?)
 	const IMAGE_MEMSIZE = max_resolution.x * max_resolution.y * 4
 	if buffer.len(image) ~= IMAGE_MEMSIZE then
 		error "The given image buffer's size must be equal to the product of the given maximum resolution's `x` and `y` times 4."
@@ -175,13 +175,13 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 	const W = w
 
 	-- View settings
-	local VIEW_RESOLUTION = view_resolution or max_resolution
-	local VIEW_WIDTH = VIEW_RESOLUTION.x
-	local VIEW_HEIGHT = VIEW_RESOLUTION.y
-	local VIEW_STRIDE = VIEW_WIDTH * 4
+	local RENDER_RESOLUTION = render_resolution or max_resolution
+	local RENDER_WIDTH = RENDER_RESOLUTION.x
+	local RENDER_HEIGHT = RENDER_RESOLUTION.y
+	local ROW_STRIDE = RENDER_WIDTH * 4
 
 	-- Style settings
-	local STYLE_COLOR = 0xFF000000
+	local STYLE_COLOR = 0xFF000000 -- 0xAABBGGRR
 	local STYLE_THICKNESS = 1
 	local STYLE_TEXT_FONT = PORTFOLIO6x8
 
@@ -193,17 +193,17 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 	-- Draws a vertical span at column x, covering rows `start_y` through `end_y` inclusive.
 	const function draw_vertical_span(x: number, start_y: number, end_y: number): ()
 		const x_byte = x * 4
-		local offset = start_y * VIEW_STRIDE + x_byte
+		local offset = start_y * ROW_STRIDE + x_byte
 		for _ = start_y, end_y do
 			buffer.writeu32(IMAGE, offset, STYLE_COLOR)
 			buffer.writeu32(W, offset, F32_INF)
-			offset += VIEW_STRIDE
+			offset += ROW_STRIDE
 		end
 	end
 
 	-- Draws a horizontal span at row y, covering columns `left_x` through `right_x` inclusive.
 	const function draw_horizontal_span(y: number, left_x: number, right_x: number): ()
-		const row_offset = y * VIEW_STRIDE
+		const row_offset = y * ROW_STRIDE
 		const start_offset = row_offset + left_x * 4
 		const end_offset   = row_offset + right_x * 4
 		for offset = start_offset, end_offset, 4 do
@@ -212,29 +212,55 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 		end
 	end
 
-	const function SET_VIEW_RESOLUTION(view_resolution: vector): ()
-		const view_width = view_resolution.x
-		const view_height = view_resolution.y
+	const function GET_RENDER_RESOLUTION(): (vector)
+		return vector.create(RENDER_WIDTH, RENDER_HEIGHT)
+	end
 
-		if view_width < 0 or view_height < 0 then
+	const function SET_RENDER_RESOLUTION(render_resolution: vector): ()
+		const render_width = render_resolution.x
+		const render_height = render_resolution.y
+
+		if render_width < 0 or render_height < 0 then
 			error "Invalid view resolution"
 		end
-		if view_width > max_resolution.x then
+		if render_width > max_resolution.x then
 			error "New view width cannot be greater than the max width"
 		end
-		if view_height > max_resolution.y then
+		if render_height > max_resolution.y then
 			error "New view height cannot be greater than the max height"
 		end
 
-		VIEW_RESOLUTION = view_resolution
-		VIEW_WIDTH = view_width
-		VIEW_HEIGHT = view_height
-		VIEW_STRIDE = VIEW_WIDTH * 4
+		RENDER_RESOLUTION = render_resolution
+		RENDER_WIDTH = render_width
+		RENDER_HEIGHT = render_height
+		ROW_STRIDE = RENDER_WIDTH * 4
 	end
 
-	const function GET_TEXT_SIZE(text: string): (number, number)
-		const text_length = utf8.len(text) or 1
-		return CHAR_WIDTH * text_length + CHAR_PADDING * (text_length - 1), CHAR_HEIGHT
+	-- Calculates the bounding box of the text.
+	local function GET_TEXT_BOUNDS(text: string): (number, number)
+		local curr_line_width = 0
+		local max_line_width = 0
+		local lines = 1
+		
+		-- Fast path for empty strings
+		if #text == 0 then
+			return 0, 0
+		end
+
+		for _, codepoint in utf8.codes(text) do
+			if codepoint == 10 then -- '\n' character
+				max_line_width = if curr_line_width > max_line_width then curr_line_width else max_line_width
+				curr_line_width = 0
+				lines += 1
+			elseif codepoint ~= 13 then -- Ignore '\r' carriage returns for safety
+				curr_line_width += 1
+			end
+		end
+		
+		-- Evaluate the final line if the string didn't end in a newline
+		max_line_width = if curr_line_width > max_line_width then curr_line_width else max_line_width
+
+		return (CHAR_WIDTH + CHAR_PADDING) * max_line_width - CHAR_PADDING, CHAR_HEIGHT * lines
 	end
 
 	-- Sets the global color to be used by shape renderers.
@@ -261,14 +287,15 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 		CHAR_PADDING = ((font.padding / font_height) * text_size + 0.5) // 1
 	end
 
-	-- Draws a polyline from the given sequence of points.
-	const function LINE(...: vector): ()
-		const points = { ... }
-		for i = 1, #points - 1 do
-			const p1 = points[i]
-			const p2 = points[i + 1]
-			const x1, y1 = p1.x, p1.y
-			const x2, y2 = p2.x, p2.y
+	const function SET_LINE_THICKNESS(line_thickness: number): ()
+		STYLE_THICKNESS = line_thickness
+	end
+
+	-- Draws a polyline from the given sequence of number pairs (x, y).
+	const function LINE(points: {number}): ()
+		for i = 1, #points - 2, 2 do
+			const x1, y1 = points[i], points[i + 1]
+			const x2, y2 = points[i + 2], points[i + 3]
 
 			const dx = x2 - x1
 			const dy = y2 - y1
@@ -312,14 +339,13 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 	end
 
 	-- Renders a triangle performantly (derived from `AnotherSubatomo/kosmos`, `draw_triangle()`).
-	const function TRIANGLE(a: vector, b: vector, c: vector): ()
-		const canvas_bound_x = VIEW_WIDTH - 1
-		const canvas_bound_y = VIEW_HEIGHT - 1
-
-		-- Unpack vertices
-		local ax, ay = a.x, a.y
-		local bx, by = b.x, b.y
-		local cx, cy = c.x, c.y
+	const function TRIANGLE(
+		ax: number, ay: number,
+		bx: number, by: number,
+		cx: number, cy: number
+	): ()
+		const canvas_bound_x = RENDER_WIDTH - 1
+		const canvas_bound_y = RENDER_HEIGHT - 1
 
 		-- Sort vertices (along with their UV) by ascending Y [c (bottom) -> b -> a (top)]
 		if ay > by then ax, ay, bx, by = bx, by, ax, ay end
@@ -355,7 +381,7 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 		if y_middle > y_end   then y_middle = y_end   end
 
 		-- Precompute row offset into image buffer
-		local write_offset = y_start * VIEW_STRIDE
+		local write_offset = y_start * ROW_STRIDE
 
 		-- Rasterize the top half of triangle (a --> b)
 		for y = y_start, y_middle - 1 do
@@ -382,7 +408,7 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 				offset += 4
 			end
 
-			write_offset += VIEW_STRIDE
+			write_offset += ROW_STRIDE
 		end
 
 		-- Adjust the split if discretization misses the true middle scanline
@@ -413,34 +439,32 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 				offset += 4
 			end
 
-			write_offset += VIEW_STRIDE
+			write_offset += ROW_STRIDE
 		end
 	end
 
 	-- Renders a simple rectangle performantly.
-	const function RECTANGLE(position: vector, size: vector): ()
-		const size_x_stride = size.x * 4
+	const function RECTANGLE(px: number, py: number, sx: number, sy: number): ()
+		const size_x_stride = sx * 4
 
-		const init_offset = position.y * VIEW_STRIDE + position.x * 4
+		const init_offset = py * ROW_STRIDE + px * 4
 
 		for offset_x = 0, size_x_stride - 4, 4 do
 			buffer.writeu32(IMAGE, init_offset + offset_x, STYLE_COLOR)
 			buffer.writeu32(W, init_offset + offset_x, F32_INF)
 		end
 
-		local write_offset = init_offset + VIEW_STRIDE
+		local write_offset = init_offset + ROW_STRIDE
 
-		for i = 1, size.y - 1 do
+		for i = 1, sy - 1 do
 			buffer.copy(IMAGE, write_offset, IMAGE, init_offset, size_x_stride)
 			buffer.copy(W, write_offset, W, init_offset, size_x_stride)
-			write_offset += VIEW_STRIDE
+			write_offset += ROW_STRIDE
 		end
 	end
 
 	-- Renders a circle via the midpoint circle algorithm (i.e. Bresenham's circle).
-	const function CIRCLE(position: vector, radius: number): ()
-
-		const cx, cy = position.x, position.y
+	const function CIRCLE(cx: number, cy: number, radius: number): ()
 		local x, y = radius, 0
 		local d = 1 - radius
 
@@ -467,7 +491,7 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 	end
 
 	-- Renders text for bitmap fonts; newlines are not properly supported.
-	const function TEXT(position: vector, text: string): ()
+	const function TEXT(px: number, py: number, text: string): ()
 		const bitmaps = STYLE_TEXT_FONT.bitmaps
 		const font_width = STYLE_TEXT_FONT.width
 		const font_height = STYLE_TEXT_FONT.height
@@ -477,7 +501,7 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 		const u_ratio = (1 / char_bound_x) * (font_width - 1)
 		const v_ratio = (1 / char_bound_y) * (font_height - 1)
 
-		local init_write_offset = position.y * VIEW_STRIDE + position.x * 4
+		local init_write_offset = py * ROW_STRIDE + px * 4
 		const color_rgb = bit32.band(STYLE_COLOR, 0x00FFFFFF)
 
 		local this_offset, this_code = iterate_codes(text, 0)
@@ -535,7 +559,7 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 					end
 				end
 
-				write_offset += VIEW_STRIDE
+				write_offset += ROW_STRIDE
 			end
 
 			init_write_offset += (CHAR_WIDTH + CHAR_PADDING) * 4
@@ -544,17 +568,20 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 	end
 
 	return {
-		getTextSize = GET_TEXT_SIZE,
+		getTextBounds = GET_TEXT_BOUNDS;
 
-		setColor = SET_COLOR,
-		setFont = SET_FONT,
-		setTextSize = SET_TEXT_SIZE,
-		setViewResolution = SET_VIEW_RESOLUTION,
+		setColor = SET_COLOR;
+		setFont = SET_FONT;
+		setTextSize = SET_TEXT_SIZE;
+		setLineThickness = SET_LINE_THICKNESS;
 
-		line = LINE,
-		triangle = TRIANGLE,
-		rectangle = RECTANGLE,
-		circle = CIRCLE,
-		text = TEXT,
+		line = LINE;
+		triangle = TRIANGLE;
+		rectangle = RECTANGLE;
+		circle = CIRCLE;
+		text = TEXT;
+
+		getRenderResolution = GET_RENDER_RESOLUTION;
+		setRenderResolution = SET_RENDER_RESOLUTION;
 	}
 end
