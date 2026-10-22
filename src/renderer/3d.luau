@@ -156,7 +156,7 @@ const function intersect(a: vector, auv: vector, b: vector, buv: vector): (vecto
 	end
 end
 
-return function (image: buffer, w: buffer, max_resolution: vector, view_resolution: vector?)
+return function (image: buffer, w: buffer, max_resolution: vector, render_resolution: vector?)
 	const IMAGE_MEMSIZE = max_resolution.x * max_resolution.y * 4
 	if buffer.len(image) ~= IMAGE_MEMSIZE then
 		error "The given image buffer's size must be equal to the product of the given maximum resolution's `x` and `y` times 4."
@@ -168,15 +168,19 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 	const IMAGE = image
 	const W = w
 
-	-- View settings
-	local VIEW_RESOLUTION = view_resolution or max_resolution
-	local VIEW_WIDTH = VIEW_RESOLUTION.x
-	local VIEW_HEIGHT = VIEW_RESOLUTION.y
-	local VIEW_ROW_OFFSET = VIEW_WIDTH * 4
+	-- Render settings
+	local true_render_resolution = render_resolution or max_resolution
+	local RENDER_WIDTH = true_render_resolution.x
+	local RENDER_HEIGHT = true_render_resolution.y
+	local ROW_STRIDE = RENDER_WIDTH * 4
 
-	local WIDTH_M_1 = VIEW_WIDTH - 1
-	local HEIGHT_M_1 = VIEW_HEIGHT - 1
-	local ASPECT_RATIO = VIEW_WIDTH / VIEW_HEIGHT
+	-- View settings
+	local VIEW_OFFSET_X = 0
+	local VIEW_WIDTH_M_1 = RENDER_WIDTH - 1
+	local VIEW_OFFSET_Y = 0
+	local VIEW_HEIGHT_M_1 = RENDER_HEIGHT - 1
+	local VIEW_END_X = VIEW_OFFSET_X + VIEW_WIDTH_M_1
+	local VIEW_END_Y = VIEW_OFFSET_Y + VIEW_HEIGHT_M_1
 
 	-- Atmosphere settings
 	local AMBIENT = 0.4 -- base light (0–1)
@@ -197,6 +201,7 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 	local UP = GLOBAL_UP
 	local FORWARD = GLOBAL_FORWARD
 
+	local ASPECT_RATIO = RENDER_WIDTH / RENDER_HEIGHT
 	local TAN_Y = math.tan(math.rad(90) * 0.5)
 	local TAN_X = TAN_Y * ASPECT_RATIO
 
@@ -289,33 +294,64 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 		if bottom_id and bottom_id ~= SKYBOX_TEXTURES[6] then SKYBOX_TEXTURES[6] = bottom_id end
 	end
 
-	const function SET_VIEW_RESOLUTION(view_resolution: vector): ()
-		const view_width = view_resolution.x
-		const view_height = view_resolution.y
+	const function GET_RENDER_RESOLUTION(): (vector)
+		return vector.create(RENDER_WIDTH, RENDER_HEIGHT)
+	end
 
-		if view_width < 0 or view_height < 0 then
-			error "Invalid view resolution"
+	const function SET_RENDER_RESOLUTION(render_resolution: vector): ()
+		const render_width = render_resolution.x
+		const render_height = render_resolution.y
+
+		if render_width < 0 or render_height < 0 then
+			error "Invalid render resolution"
 		end
-		if view_width > max_resolution.x then
-			error "New view width cannot be greater than the max width"
+		if render_width > max_resolution.x then
+			error "New render width cannot be greater than the max width"
 		end
-		if view_height > max_resolution.y then
-			error "New view height cannot be greater than the max height"
+		if render_height > max_resolution.y then
+			error "New render height cannot be greater than the max height"
 		end
 
-		VIEW_RESOLUTION = view_resolution
-		VIEW_WIDTH = view_width
-		VIEW_HEIGHT = view_height
-		VIEW_ROW_OFFSET = VIEW_WIDTH * 4
+		RENDER_WIDTH = render_width
+		RENDER_HEIGHT = render_height
 
-		WIDTH_M_1 = VIEW_WIDTH - 1
-		HEIGHT_M_1 = VIEW_HEIGHT - 1
-		ASPECT_RATIO = VIEW_WIDTH / VIEW_HEIGHT
+		ROW_STRIDE = RENDER_WIDTH * 4
+		ASPECT_RATIO = RENDER_WIDTH / RENDER_HEIGHT
 
 		-- Recalculate FOV for the x-axis
 		TAN_X = TAN_Y * ASPECT_RATIO
 		INV_TAN_X = 1 / TAN_X
 		LEN_X = math.sqrt(1 + TAN_X * TAN_X)
+	end
+
+	const function SET_VIEW_RESOLUTION(view_resolution: vector): ()
+		const view_width_m_1 = view_resolution.x - 1
+		const view_height_m_1 = view_resolution.y - 1
+
+		if VIEW_OFFSET_X + view_width_m_1 > RENDER_WIDTH or VIEW_OFFSET_Y + view_height_m_1 > RENDER_HEIGHT then
+			error "The sum of the new view position and current view resolution cannot be greater than the current render resolution"
+		end
+
+		VIEW_WIDTH_M_1 = view_width_m_1
+		VIEW_HEIGHT_M_1 = view_height_m_1
+
+		VIEW_END_X = VIEW_OFFSET_X + VIEW_WIDTH_M_1
+		VIEW_END_Y = VIEW_OFFSET_Y + VIEW_HEIGHT_M_1
+	end
+
+	const function SET_VIEW_POSITION(view_position: vector): ()
+		const view_offset_x = view_position.x
+		const view_offset_y = view_position.y
+
+		if view_offset_x + VIEW_WIDTH_M_1 > RENDER_WIDTH or view_offset_y + VIEW_HEIGHT_M_1 > RENDER_HEIGHT then
+			error "The sum of the new view position and current view resolution cannot be greater than the current render resolution"
+		end
+		
+		VIEW_OFFSET_X = view_offset_x
+		VIEW_OFFSET_Y = view_offset_y
+
+		VIEW_END_X = VIEW_OFFSET_X + VIEW_WIDTH_M_1
+		VIEW_END_Y = VIEW_OFFSET_Y + VIEW_HEIGHT_M_1
 	end
 
 	-- Projects the vertex into screen space. (the unmodified `z` is also returned)
@@ -325,8 +361,8 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 		const py = (v.y/z) * INV_TAN_Y
 
 		return 
-			((px + 1) * 0.5 * WIDTH_M_1) // 1,
-			((1 - (py + 1) * 0.5) * HEIGHT_M_1) // 1,
+			VIEW_OFFSET_X + ((px + 1) * 0.5 * VIEW_WIDTH_M_1) // 1,
+			VIEW_OFFSET_Y + ((1 - (py + 1) * 0.5) * VIEW_HEIGHT_M_1) // 1,
 			z
 	end
 
@@ -593,8 +629,8 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 		if y_start > y_end then y_start, y_end = y_end, y_start end
 
 		-- Clamp to viewport height (prevents OOB buffer errors)
-		y_start = math.max(0, y_start)
-		y_end   = math.min(HEIGHT_M_1, y_end)
+		y_start = math.max(VIEW_OFFSET_Y, y_start)
+		y_end   = math.min(VIEW_END_Y, y_end)
 
 		-- Split the triangle!
 		local y_middle = by // 1
@@ -604,7 +640,7 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 		if y_middle > y_end   then y_middle = y_end   end
 
 		-- Precompute row offset into image buffer
-		local row_stride = y_start * VIEW_ROW_OFFSET
+		local row_stride = y_start * ROW_STRIDE
 
 		-- Rasterize the top half of triangle (a --> b)
 		for y = y_start, y_middle - 1 do
@@ -636,8 +672,8 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 			end
 
 			-- Clamp horizontal span to screen bounds
-			local x_start = math.max(0, (lx + 0.5) // 1)
-			local x_end   = math.min(WIDTH_M_1, rx // 1)
+			local x_start = math.max(VIEW_OFFSET_X, (lx + 0.5) // 1)
+			local x_end   = math.min(VIEW_END_X, rx // 1)
 			local offset  = row_stride + x_start * 4
 
 			-- Compute per-pixel slopes across scanline
@@ -692,7 +728,7 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 				offset += 4
 			end
 
-			row_stride += VIEW_ROW_OFFSET
+			row_stride += ROW_STRIDE
 		end
 
 		-- Adjust the split if discretization misses the true middle scanline
@@ -728,8 +764,8 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 			end
 
 			-- Clamp horizontal span to screen bounds
-			local x_start = math.max(0, (lx + 0.5) // 1)
-			local x_end   = math.min(WIDTH_M_1, rx // 1)
+			local x_start = math.max(VIEW_OFFSET_X, (lx + 0.5) // 1)
+			local x_end   = math.min(VIEW_END_X, rx // 1)
 			local offset  = row_stride + x_start * 4
 
 			-- Compute per-pixel slopes across scanline
@@ -784,7 +820,7 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 				offset += 4
 			end
 
-			row_stride += VIEW_ROW_OFFSET
+			row_stride += ROW_STRIDE
 		end
 	end
 
@@ -1055,6 +1091,9 @@ return function (image: buffer, w: buffer, max_resolution: vector, view_resoluti
 		setSkyboxTextures = SET_SKYBOX_TEXTURES;
 
 		render = RENDER;
+		getRenderResolution = GET_RENDER_RESOLUTION;
+		setRenderResolution = SET_RENDER_RESOLUTION;
 		setViewResolution = SET_VIEW_RESOLUTION;
+		setViewPosition = SET_VIEW_POSITION;
 	}
 end
