@@ -7,16 +7,143 @@
 ]=]
 
 --[=[
-	SUPPLEMENTARY INFORMATION ABOUT THE IMPLEMENTATION
-	==================================================
+	INVARIANTS & DESIGN NOTES
+	=========================
 
-	# Position vectors passed to every renderer function MUST
-	be and are ASSUMED to be 0-based, unsigned integers.
-	Float coordinates should be floored before passing.
+	The following are assumptions the implementation makes, or
+	behaviors callers must know about. They are not enforced by
+	type checks and will fail silently (or corrupt output) if
+	violated.
 
-	# Bound checks aren't done during pixel draws to remain as
-	performant as possible. Ensure all elements you command
-	to draw are within bounds before passing.
+	# Buffer contracts
+	------------------
+	* `image` and `W` MUST have identical lengths, equal to
+	  `max_resolution.x * max_resolution.y * 4`.
+
+	* `W` is a per-pixel depth buffer of f32 bit patterns.
+	   Every filled pixel receives `F32_INF` (`0x7F800000`).
+	   The renderer never READS `W`; it is produced for `renderer/3d`.
+
+	* The `(x, y)` coordinate space is `RENDER_RESOLUTION`, and
+	  rows are tightly packed at a stride of `RENDER_WIDTH * 4`,
+	  NOT `max_resolution.x * 4`. When
+	  `render_resolution != max_resolution`, the buffer is only
+	  partially utilized and the packing is tighter than the
+	  allocation implies. Any consumer writing the buffer to an
+	  image (e.g. `editableImage:writePixelsBuffer`) must use
+	  `RENDER_WIDTH` as the row stride.
+
+	# View / resolution
+	-------------------
+	* `render_resolution` defaults to `max_resolution` when
+	  omitted from the constructor.
+
+	* The constructor does NOT validate `render_resolution`
+	  against `max_resolution`; `SET_RENDER_RESOLUTION` does.
+	  Passing a larger `render_resolution` to the constructor
+	  will produce out-of-bounds writes.
+
+	* `SET_RENDER_RESOLUTION` only works when there is nothing
+	  on the clip stack; this is done to make reasoning easier.
+
+	# Coordinates
+	-------------
+	* All coordinates passed to primitive renderers are assumed
+	  to be 0-based integers. `LINE`, `CIRCLE`, and `TEXT`
+	  effectively floor via span math / clip checks. `RECTANGLE`
+	  is the exception: it does NOT floor `px, py, sx, sy`.
+	  Floor them yourself before calling.
+
+	* `LINE` accepts a flat `{x1, y1, x2, y2, ...}` polyline.
+	  An odd trailing element is silently ignored. Fewer than
+	  two points is a no-op.
+
+	* `CIRCLE` is an UNFILLED outline (Bresenham). `radius`
+	  must be a non-negative integer; negative radii are a
+	  no-op.
+
+	* Line thickness is applied perpendicular to the segment
+	  and rounded via `// 1` on each span edge. A line and a
+	  rectangle of the same nominal thickness will not have
+	  identical pixel counts. `RECTANGLE` uses inclusive
+	  `y + sy - 1`; spans do not add a `+1`.
+
+	# Clipping
+	----------
+	* `PUSH_CLIP(x, y, w, h)` intersects the given rect with
+	  the current clip (and floors its inputs). Nested pushes
+	  are supported.
+
+	* `GET_CLIP_POSITION()` returns the effective (intersected)
+	  clip origin, not the origin of the most recent push.
+
+	* `CLIP_X_MIN`/`CLIP_Y_MIN` are always >= 0 by construction
+	  (they are initialized to 0 and only raised via `max`),
+	  so fast-path offset math in `TEXT` is safe from negative
+	  byte offsets.
+
+	* The clip is independent of `RENDER_RESOLUTION`. Text and
+	  shapes are clipped to the active clip rect, not to the
+	  view; `getTextBounds` may exceed the view.
+
+	# Fonts & text
+	--------------
+	* `SET_TEXT_SIZE(size)` derives `CHAR_WIDTH` and
+	  `CHAR_PADDING` from font metrics using round-to-nearest
+	  (`+ 0.5 // 1`):
+	      CHAR_WIDTH   = round(font.width   / font.height * size)
+	      CHAR_HEIGHT  = size
+	      CHAR_PADDING = round(font.padding / font.height * size)
+	  Changing the font and re-setting the same logical size
+	  can yield a different pixel width/padding.
+
+	* `CHAR_WIDTH` can round to 0 for tiny sizes or narrow
+	  fonts. There is no guard against this; `TEXT` and
+	  `GET_TEXT_BOUNDS` will degenerate. Keep
+	  `size >= font.height / font.width` (roughly) to avoid it.
+
+	* `SET_FONT(nil)` clears the glyph cache but KEEPS the
+	  current font. It does not reset to the default font.
+
+	* The glyph cache is keyed by codepoint and cleared on
+	  `SET_FONT` and `SET_TEXT_SIZE`. It is intentionally NOT
+	  cleared on `SET_RENDER_RESOLUTION` (glyphs are
+	  resolution-independent). Preserve this when editing.
+
+	* `GET_TEXT_BOUNDS` reflects the CURRENT font and text
+	  size; call `SET_FONT` / `SET_TEXT_SIZE` first. The
+	  returned width excludes trailing `CHAR_PADDING`; the
+	  returned height is `CHAR_HEIGHT * lines` with no
+	  trailing padding, and counts a line for each `\n` plus
+	  one for the final segment. A string of only `\r`
+	  reports one line of height 0 width, even though `TEXT`
+	  draws and advances nothing for it.
+
+	* `SET_FONT` returns a boolean that is always `true` on
+	  the success path (the post-assignment comparison can
+	  only be false when `font == nil` and the previous font
+	  was nil, which is impossible). Treat the return as
+	  reserved.
+
+	# Bitmap fonts (u52_bitmap_font)
+	-------------------------------
+	* `width * height` must be <= 52. `SET_FONT` enforces this
+	  product, but does NOT validate individual `bitmaps`
+	  values. Bit-packing assumes each value is < 2^52 (Luau
+	  doubles cannot represent 2^52 + 1 exactly, and
+	  `sample_bitmap` splits at bit 31 via division by
+	  2^32). Pass well-formed bitmaps.
+
+	* Bit-packing convention: rows are grouped left-to-right
+	  with the topmost row's bits in the most-significant
+	  group; within a row, the leftmost bit is the leftmost
+	  pixel. Reading bits linearly from LSB to MSB therefore
+	  proceeds right-to-left and bottom-to-top, placing the
+	  origin at the bottom-right.
+
+	* `padding` is on the right and bottom edges and is NOT
+	  baked into the bitmap; the text renderer accounts for it
+	  via `CHAR_PADDING`.
 ]=]
 
 --!strict
@@ -150,8 +277,11 @@ const PORTFOLIO6x8: u52_bitmap_font = {
 	}
 }
 
-const EPSILON = 1e-12
 const F32_INF = 0x7F800000 -- IEEE 754's bit patterns for f32's positive infinity
+
+const max = math.max
+const min = math.min
+const abs = math.abs
 
 const iterate_codes = utf8.codes ''
 
@@ -167,7 +297,7 @@ end
 
 return function (image: buffer, w: buffer, max_resolution: vector, render_resolution: vector?)
 	const IMAGE_MEMSIZE = max_resolution.x * max_resolution.y * 4
-	if buffer.len(image) ~= IMAGE_MEMSIZE then
+	if buffer.len(image) ~= IMAGE_MEMSIZE or buffer.len(w) ~= IMAGE_MEMSIZE then
 		error "The given image buffer's size must be equal to the product of the given maximum resolution's `x` and `y` times 4."
 	end
 
@@ -190,8 +320,26 @@ return function (image: buffer, w: buffer, max_resolution: vector, render_resolu
 	local CHAR_HEIGHT = STYLE_TEXT_FONT.height
 	local CHAR_PADDING = STYLE_TEXT_FONT.padding
 
+	-- Glyph blend cache: codepoint -> buffer of CHAR_WIDTH * CHAR_HEIGHT u8 alphas.
+	-- Invalidated whenever the font or text size changes.
+	local GLYPH_CACHE: {[number]: buffer} = {}
+
+	-- Clip settings
+	local CLIP_X_MIN = 0
+	local CLIP_Y_MIN = 0
+	local CLIP_X_MAX = RENDER_WIDTH - 1
+	local CLIP_Y_MAX = RENDER_HEIGHT - 1
+
+	local CLIP_STACK = {}
+	local CLIP_STACK_N = 0
+
 	-- Draws a vertical span at column x, covering rows `start_y` through `end_y` inclusive.
 	const function draw_vertical_span(x: number, start_y: number, end_y: number): ()
+		if x < CLIP_X_MIN or x > CLIP_X_MAX then return end
+		if start_y < CLIP_Y_MIN then start_y = CLIP_Y_MIN end
+		if end_y > CLIP_Y_MAX then end_y = CLIP_Y_MAX end
+		if start_y > end_y then return end
+
 		const x_byte = x * 4
 		local offset = start_y * ROW_STRIDE + x_byte
 		for _ = start_y, end_y do
@@ -203,6 +351,11 @@ return function (image: buffer, w: buffer, max_resolution: vector, render_resolu
 
 	-- Draws a horizontal span at row y, covering columns `left_x` through `right_x` inclusive.
 	const function draw_horizontal_span(y: number, left_x: number, right_x: number): ()
+		if y < CLIP_Y_MIN or y > CLIP_Y_MAX then return end
+		if left_x < CLIP_X_MIN then left_x = CLIP_X_MIN end
+		if right_x > CLIP_X_MAX then right_x = CLIP_X_MAX end
+		if left_x > right_x then return end
+
 		const row_offset = y * ROW_STRIDE
 		const start_offset = row_offset + left_x * 4
 		const end_offset   = row_offset + right_x * 4
@@ -212,6 +365,74 @@ return function (image: buffer, w: buffer, max_resolution: vector, render_resolu
 		end
 	end
 
+	-- Rasterizes a glyph to a u8 blend mask using pseudo-bilinear filtering of the
+	-- binary source bitmap. The cost of this is paid once per (codepoint, size) pair.
+	const function rasterize_glyph(codepoint: number): (buffer)
+		const font_width = STYLE_TEXT_FONT.width
+		const font_height = STYLE_TEXT_FONT.height
+		const bitmap = STYLE_TEXT_FONT.bitmaps[codepoint] or 0
+		const out = buffer.create(CHAR_WIDTH * CHAR_HEIGHT)
+
+		-- Fast path: output resolution matches source, so every output pixel
+		-- is exactly one source pixel. No filtering required.
+		if CHAR_WIDTH == font_width and CHAR_HEIGHT == font_height then
+			local offset = 0
+			for y = font_height - 1, 0, -1 do
+				for x = font_width - 1, 0, -1 do
+					buffer.writeu8(out, offset, sample_bitmap(bitmap, x, y, font_width) * 255)
+					offset += 1
+				end
+			end
+			return out
+		end
+
+		const char_bound_x = CHAR_WIDTH - 1
+		const char_bound_y = CHAR_HEIGHT - 1
+		const u_ratio = if char_bound_x > 0 then (font_width - 1) / char_bound_x else 0
+		const v_ratio = if char_bound_y > 0 then (font_height - 1) / char_bound_y else 0
+
+		-- Faked, optimized, bilinear sampling
+		local offset = 0
+		for py = char_bound_y, 0, -1 do
+			const v = py * v_ratio
+			const lv = v // 1
+			const hv = (v + 0.5) // 1
+			const tv = v - lv
+
+			for px = char_bound_x, 0, -1 do
+				const u = px * u_ratio
+				const lu = u // 1
+				const hu = (u + 0.5) // 1
+				const tu = u - lu
+
+				const p00 = sample_bitmap(bitmap, lu, lv, font_width)
+				const p10 = sample_bitmap(bitmap, hu, lv, font_width)
+				const p01 = sample_bitmap(bitmap, lu, hv, font_width)
+				const p11 = sample_bitmap(bitmap, hu, hv, font_width)
+
+				const a = p00 + (p10 - p00) * tu
+				const b = p01 + (p11 - p01) * tu
+				local value = a + (b - a) * tv
+
+				-- Gamma correction (before sharpening)
+				value = math.sqrt(value)
+
+				-- Adaptive sharpening (only in midtones)
+				if value > 0.3 and value < 0.7 then
+				value = math.clamp((value - 0.5) * 1.2 + 0.5, 0, 1)
+				end
+
+				-- Back to linear, then to u8
+				value = (value * value) * 255 // 1
+				if value > 255 then value = 255 end
+
+				buffer.writeu8(out, offset, value)
+				offset += 1
+			end
+		end
+		return out
+	end
+
 	const function GET_RENDER_RESOLUTION(): (vector)
 		return vector.create(RENDER_WIDTH, RENDER_HEIGHT)
 	end
@@ -219,6 +440,10 @@ return function (image: buffer, w: buffer, max_resolution: vector, render_resolu
 	const function SET_RENDER_RESOLUTION(render_resolution: vector): ()
 		const render_width = render_resolution.x
 		const render_height = render_resolution.y
+
+		if CLIP_STACK_N ~= 0 then
+			error "Cannot change the render resolution while a clip is active; pop all clips first."
+		end
 
 		if render_width < 0 or render_height < 0 then
 			error "Invalid view resolution"
@@ -234,6 +459,11 @@ return function (image: buffer, w: buffer, max_resolution: vector, render_resolu
 		RENDER_WIDTH = render_width
 		RENDER_HEIGHT = render_height
 		ROW_STRIDE = RENDER_WIDTH * 4
+
+		CLIP_X_MIN = 0
+		CLIP_Y_MIN = 0
+		CLIP_X_MAX = RENDER_WIDTH - 1
+		CLIP_Y_MAX = RENDER_HEIGHT - 1
 	end
 
 	-- Calculates the bounding box of the text.
@@ -269,11 +499,15 @@ return function (image: buffer, w: buffer, max_resolution: vector, render_resolu
 	end
 
 	-- Sets the global font to be used by text renderers. Returns a success value.
-	const function SET_FONT(font: u52_bitmap_font?): ()
+	const function SET_FONT(font: u52_bitmap_font?): (boolean)
 		if font and font.width * font.height > 52 then
 			error "Cannot set the font to the given, the product of its width and height was greater than 52."
 		end
-		STYLE_TEXT_FONT = font or PORTFOLIO6x8
+
+		STYLE_TEXT_FONT = font or STYLE_TEXT_FONT
+		table.clear(GLYPH_CACHE)
+
+		return STYLE_TEXT_FONT == font
 	end
 
 	-- Sets the global text size to be used by text renderers.
@@ -285,166 +519,118 @@ return function (image: buffer, w: buffer, max_resolution: vector, render_resolu
 		CHAR_WIDTH = ((font_width / font_height) * text_size + 0.5) // 1
 		CHAR_HEIGHT = text_size
 		CHAR_PADDING = ((font.padding / font_height) * text_size + 0.5) // 1
+		table.clear(GLYPH_CACHE)
 	end
 
 	const function SET_LINE_THICKNESS(line_thickness: number): ()
 		STYLE_THICKNESS = line_thickness
 	end
 
+	-- Pushes the clip configuration onto the clip stack such that
+	-- the new clip is the intersection of the previous with the given.
+	const function PUSH_CLIP(x: number, y: number, w: number, h: number): ()
+		CLIP_STACK_N += 1
+		CLIP_STACK[CLIP_STACK_N] = {CLIP_X_MIN, CLIP_Y_MIN, CLIP_X_MAX, CLIP_Y_MAX}
+		CLIP_X_MIN = max(CLIP_X_MIN, x // 1)
+		CLIP_Y_MIN = max(CLIP_Y_MIN, y // 1)
+		CLIP_X_MAX = min(CLIP_X_MAX, (x + w) // 1 - 1)
+		CLIP_Y_MAX = min(CLIP_Y_MAX, (y + h) // 1 - 1)
+	end
+
+	-- Restores the preceeding clip configuration.
+	const function POP_CLIP(): ()
+		if CLIP_STACK_N == 0 then return end
+		const saved = CLIP_STACK[CLIP_STACK_N]
+		CLIP_STACK[CLIP_STACK_N] = nil
+		CLIP_STACK_N -= 1
+		CLIP_X_MIN, CLIP_Y_MIN, CLIP_X_MAX, CLIP_Y_MAX = saved[1], saved[2], saved[3], saved[4]
+	end
+
+	-- Returns the current clip's position.
+	const function GET_CLIP_POSITION(): (number, number)
+		return CLIP_X_MIN, CLIP_Y_MIN
+	end
+
+	-- Calculates the bounding box of the current clip.
+	const function GET_CLIP_BOUNDS(): (number, number)
+		return CLIP_X_MAX - CLIP_X_MIN + 1, CLIP_Y_MAX - CLIP_Y_MIN + 1
+	end
+
 	-- Draws a polyline from the given sequence of number pairs (x, y).
 	const function LINE(points: {number}): ()
+		if STYLE_THICKNESS <= 0 then return end
+
 		for i = 1, #points - 2, 2 do
 			const x1, y1 = points[i], points[i + 1]
 			const x2, y2 = points[i + 2], points[i + 3]
 
 			const dx = x2 - x1
 			const dy = y2 - y1
-			const len = math.sqrt(dx * dx + dy * dy)
-			if len < EPSILON then continue end
 
-			const half_thick = STYLE_THICKNESS / 2
+			if dx == 0 and dy == 0 then
+				continue
+			elseif dx == 0 then
+				-- Pure vertical segment.
+				const y_start = min(y1, y2)
+				const y_end   = max(y1, y2)
+				const x_start = x1 - (STYLE_THICKNESS - 1) // 2
+				const x_end   = x_start + STYLE_THICKNESS - 1
+				for y = y_start, y_end do
+					draw_horizontal_span(y, x_start, x_end)
+				end
+			elseif dy == 0 then
+				-- Pure horizontal segment.
+				const x_start = min(x1, x2)
+				const x_end   = max(x1, x2)
+				const y_start = y1 - (STYLE_THICKNESS - 1) // 2
+				const y_end   = y_start + STYLE_THICKNESS - 1
+				for x = x_start, x_end do
+					draw_vertical_span(x, y_start, y_end)
+				end
+			else
+				const len = math.sqrt(dx * dx + dy * dy)
 
-			if math.abs(dx) >= math.abs(dy) then
-				-- Shallow line: one vertical span per integer x.
-				const x_start = math.min(x1, x2)
-				const x_end = math.max(x1, x2)
-				const span = half_thick * math.abs(dx / len)
-
-				if math.abs(dx) < EPSILON then
-					const y_start = (y1 - span) // 1
-					const y_end = (y1 + span) // 1
-					for x = x_start, x_end do
-						draw_vertical_span(x, y_start, y_end)
-					end
-				else
+				if abs(dx) >= abs(dy) then
+					-- Shallow: one vertical span per integer x.
+					const x_start = min(x1, x2)
+					const x_end   = max(x1, x2)
+					-- Half-width of the line in the *vertical* direction,
+					-- rounded so that integer thickness yields integer spans.
+					const span = (STYLE_THICKNESS - 1) / 2 * abs(dy / len)
+					const half = span + 0.5
 					for x = x_start, x_end do
 						const t = (x - x1) / dx
 						const cy = y1 + t * dy
-						draw_vertical_span(x, (cy - span) // 1, (cy + span) // 1)
+						draw_vertical_span(x, (cy - half) // 1, (cy + half) // 1)
+					end
+				else
+					-- Steep: one horizontal span per integer y.
+					const y_start = min(y1, y2)
+					const y_end   = max(y1, y2)
+					const span = (STYLE_THICKNESS - 1) / 2 * abs(dx / len)
+					const half = span + 0.5
+					for y = y_start, y_end do
+						const t = (y - y1) / dy
+						const cx = x1 + t * dx
+						draw_horizontal_span(y, (cx - half) // 1, (cx + half) // 1)
 					end
 				end
-			else
-				-- Steep line: one horizontal span per integer y.
-				const y_start = math.min(y1, y2)
-				const y_end = math.max(y1, y2)
-				const span = half_thick * math.abs(dy / len)
-
-				for y = y_start, y_end do
-					const t = (y - y1) / dy
-					const cx = x1 + t * dx
-					draw_horizontal_span(y, (cx - span) // 1, (cx + span) // 1)
-				end
 			end
-		end
-	end
-
-	-- Renders a triangle performantly (derived from `AnotherSubatomo/kosmos`, `draw_triangle()`).
-	const function TRIANGLE(
-		ax: number, ay: number,
-		bx: number, by: number,
-		cx: number, cy: number
-	): ()
-		const canvas_bound_x = RENDER_WIDTH - 1
-		const canvas_bound_y = RENDER_HEIGHT - 1
-
-		-- Sort vertices (along with their UV) by ascending Y [c (bottom) -> b -> a (top)]
-		if ay > by then ax, ay, bx, by = bx, by, ax, ay end
-		if ay > cy then ax, ay, cx, cy = cx, cy, ax, ay end
-		if by > cy then bx, by, cx, cy = cx, cy, bx, by end
-
-		-- Precompute vertical distances for interpolation along triangle edges
-		const dy_ab = by - ay
-		const dy_ac = cy - ay
-		const dy_bc = cy - by
-
-		-- Calculate edge slopes for incremental interpolation
-		const m_ab = if dy_ab ~= 0 then (bx - ax) / dy_ab else 0
-		const m_ac = if dy_ac ~= 0 then (cx - ax) / dy_ac else 0
-		const m_bc = if dy_bc ~= 0 then (cx - bx) / dy_bc else 0
-
-		-- Discretize to get scan bounds
-		local y_start = ay // 1
-		local y_end   = cy // 1
-
-		-- Ensure correct ordering after discretization
-		if y_start > y_end then y_start, y_end = y_end, y_start end
-
-		-- Clamp to viewport height (prevents OOB buffer errors)
-		y_start = math.max(0, y_start)
-		y_end   = math.min(canvas_bound_y, y_end)
-
-		-- Split the triangle!
-		local y_middle = by // 1
-
-		-- Clamp to scan bounds
-		if y_middle < y_start then y_middle = y_start end
-		if y_middle > y_end   then y_middle = y_end   end
-
-		-- Precompute row offset into image buffer
-		local write_offset = y_start * ROW_STRIDE
-
-		-- Rasterize the top half of triangle (a --> b)
-		for y = y_start, y_middle - 1 do
-			-- Compute the general blend factor
-			const lt = (y - ay)
-			const rt = (y - ay)
-
-			-- Compute left/right X positions of the scanline
-			local lx = ax + lt * m_ab
-			local rx = ax + rt * m_ac
-
-			-- Ensure left-to-right ordering
-			if lx > rx then lx, rx = rx, lx end
-
-			-- Clamp horizontal span to screen bounds
-			const x_start = math.max(0, (lx + 0.5) // 1)
-			const x_end   = math.min(canvas_bound_x, rx // 1)
-			local offset  = write_offset + x_start * 4
-
-			-- Fill pixels across scanline
-			for _ = x_start, x_end do
-				buffer.writeu32(IMAGE, offset, STYLE_COLOR)
-				buffer.writeu32(W, offset, F32_INF)
-				offset += 4
-			end
-
-			write_offset += ROW_STRIDE
-		end
-
-		-- Adjust the split if discretization misses the true middle scanline
-		const y_middle_adj = y_middle + (y_middle < by and 1 or 0)
-
-		-- Rasterize bottom half of triangle (b --> c)
-		for y = y_middle_adj, y_end do
-			-- Compute the general blend factor
-			const lt = (y - by)
-			const rt = (y - ay)
-
-			-- Compute left/right X positions of the scanline
-			local lx = bx + lt * m_bc
-			local rx = ax + rt * m_ac
-
-			-- Ensure left-to-right ordering
-			if lx > rx then lx, rx = rx, lx end
-
-			-- Clamp horizontal span to screen bounds
-			const x_start = math.max(0, (lx + 0.5) // 1)
-			const x_end   = math.min(canvas_bound_x, rx // 1)
-			local offset  = write_offset + x_start * 4
-
-			-- Fill pixels across scanline
-			for _ = x_start, x_end do
-				buffer.writeu32(IMAGE, offset, STYLE_COLOR)
-				buffer.writeu32(W, offset, F32_INF)
-				offset += 4
-			end
-
-			write_offset += ROW_STRIDE
 		end
 	end
 
 	-- Renders a simple rectangle performantly.
 	const function RECTANGLE(px: number, py: number, sx: number, sy: number): ()
+		local x1 = max(px, CLIP_X_MIN)
+		local y1 = max(py, CLIP_Y_MIN)
+		local x2 = min(px + sx - 1, CLIP_X_MAX)
+		local y2 = min(py + sy - 1, CLIP_Y_MAX)
+		if x1 > x2 or y1 > y2 then return end
+
+		px, py = x1, y1
+		sx = x2 - x1 + 1
+		sy = y2 - y1 + 1
+
 		const size_x_stride = sx * 4
 
 		const init_offset = py * ROW_STRIDE + px * 4
@@ -463,106 +649,128 @@ return function (image: buffer, w: buffer, max_resolution: vector, render_resolu
 		end
 	end
 
-	-- Renders a circle via the midpoint circle algorithm (i.e. Bresenham's circle).
-	const function CIRCLE(cx: number, cy: number, radius: number): ()
-		local x, y = radius, 0
-		local d = 1 - radius
-
-		while x >= y do
-			const cx_x = cx + x
-			const cx_y = cx + y
-			const cx_nx = cx - x
-			const cx_ny = cx - y
-
-			draw_horizontal_span((cy + y), cx_nx, cx_x)
-			draw_horizontal_span((cy - y), cx_nx, cx_x)
-			draw_horizontal_span((cy + x), cx_ny, cx_y)
-			draw_horizontal_span((cy - x), cx_ny, cx_y)
-
-			y += 1
-
-			if d < 0 then
-				d += 2 * y + 1
-			else
-				x -= 1
-				d += 2 * (y - x) + 1
-			end
-		end
-	end
-
-	-- Renders text for bitmap fonts; newlines are not properly supported.
+	-- Renders text for bitmap fonts. Supports '\n' and skips '\r'.
+	-- Blends each glyph pixel source-over the existing image using the glyph's
+	-- 8-bit alpha as coverage. Existing destination alpha is respected.
 	const function TEXT(px: number, py: number, text: string): ()
-		const bitmaps = STYLE_TEXT_FONT.bitmaps
-		const font_width = STYLE_TEXT_FONT.width
-		const font_height = STYLE_TEXT_FONT.height
+		-- Pre-extract source channels once per call.
+		const src_a = bit32.extract(STYLE_COLOR, 24, 8)
+		const src_r = bit32.extract(STYLE_COLOR,  0, 8)
+		const src_g = bit32.extract(STYLE_COLOR,  8, 8)
+		const src_b = bit32.extract(STYLE_COLOR, 16, 8)
+		const advance = CHAR_WIDTH + CHAR_PADDING
 
-		const char_bound_x = CHAR_WIDTH - 1
-		const char_bound_y = CHAR_HEIGHT - 1
-		const u_ratio = (1 / char_bound_x) * (font_width - 1)
-		const v_ratio = (1 / char_bound_y) * (font_height - 1)
 
-		local init_write_offset = py * ROW_STRIDE + px * 4
-		const color_rgb = bit32.band(STYLE_COLOR, 0x00FFFFFF)
-
+		local cx, cy = px, py
 		local this_offset, this_code = iterate_codes(text, 0)
+
 		while this_code do
-			const bitmap = bitmaps[this_code] or 0
-			local write_offset = init_write_offset
+			if this_code == 10 then -- '\n'
+				cx = px
+				cy += CHAR_HEIGHT
+			elseif this_code ~= 13 then -- skip '\r'
+				local glyph = GLYPH_CACHE[this_code]
+				if not glyph then
+					glyph = rasterize_glyph(this_code)
+					GLYPH_CACHE[this_code] = glyph
+				end
 
-			for y = char_bound_y, 0, -1 do
-				const v = y * v_ratio
-				const lv = v // 1
-				const hv = (v + 0.5) // 1
-				const tv = v - lv
+				-- Fast path: whole glyph lies inside the current clip rect.
+				if
+					cx >= CLIP_X_MIN and cy >= CLIP_Y_MIN
+					and cx + CHAR_WIDTH - 1 <= CLIP_X_MAX
+					and cy + CHAR_HEIGHT - 1 <= CLIP_Y_MAX
+				then
+					local init_offset = cy * ROW_STRIDE + cx * 4
+					local idx = 0
 
-				for x = char_bound_x, 0, -1 do
-					const u = x * u_ratio
-					const lu = u // 1
-					const hu = (u + 0.5) // 1
-					const tu = u - lu
+					for _ = 1, CHAR_HEIGHT do
+						local offset = init_offset
+						for _ = 1, CHAR_WIDTH do
+							const ga = buffer.readu8(glyph, idx)
+							if ga ~= 0 then
+								const sa = (src_a * ga + 127) // 255
+								-- Fully opaque: skip the read-modify-write.
+								if sa == 255 then
+									buffer.writeu32(IMAGE, offset, STYLE_COLOR)
+								elseif sa ~= 0 then
+									const dst = buffer.readu32(IMAGE, offset)
+									const da  = bit32.extract(dst, 24, 8)
+									const inv = 255 - sa
 
-					const p00 = sample_bitmap(bitmap, lu, lv, font_width)
-					local final_color = 0
+									-- Per-channel source-over in 8-bit.
+									const oa = sa + (da * inv + 127) // 255
+									const or_ = (src_r * sa + bit32.extract(dst,  0, 8) * inv + 127) // 255
+									const og  = (src_g * sa + bit32.extract(dst,  8, 8) * inv + 127) // 255
+									const ob  = (src_b * sa + bit32.extract(dst, 16, 8) * inv + 127) // 255
 
-					if tu == 0 and tv == 0 then
-						-- Exact sample, no interpolation needed
-						final_color = p00 == 1 and STYLE_COLOR or 0
-					else
-						-- Bilinear sampling
-						const p10 = sample_bitmap(bitmap, hu, lv, font_width)
-						const p01 = sample_bitmap(bitmap, lu, hv, font_width)
-						const p11 = sample_bitmap(bitmap, hu, hv, font_width)
-
-						const a = p00 + (p10 - p00) * tu
-						const b = p01 + (p11 - p01) * tu
-						local value = a + (b - a) * tv
-
-						-- Gamma correction (before sharpening)
-						value = math.sqrt(value)
-
-						-- Adaptive sharpening (only in midtones)
-						if value > 0.3 and value < 0.7 then
-							value = math.clamp((value - 0.5) * 1.2 + 0.5, 0, 1)
+									buffer.writeu32(
+										IMAGE, offset,
+										bit32.bor(
+											bit32.lshift(oa,  24),
+											bit32.lshift(or_,  0),
+											bit32.lshift(og,   8),
+											bit32.lshift(ob,  16)
+										)
+									)
+								end
+								buffer.writeu32(W, offset, F32_INF)
+							end
+							offset += 4
+							idx += 1
 						end
-
-						-- Back to linear, then to u8
-						value = (value * value) * 255 // 1
-
-						final_color = value == 0 and 0 or (value * 0x1000000 + color_rgb)
+						init_offset += ROW_STRIDE
 					end
+				else
+					-- Slow path: per-pixel scissor test.
+					for y = 0, CHAR_HEIGHT - 1 do
+						const wy = cy + y
 
-					if final_color ~= 0 then
-						const offset_x = (char_bound_x - x) * 4
-						const offset = write_offset + offset_x
-						buffer.writeu32(IMAGE, offset, final_color)
-						buffer.writeu32(W, offset, F32_INF)
+						if wy >= CLIP_Y_MIN and wy <= CLIP_Y_MAX then
+							const init_offset = wy * ROW_STRIDE
+							local idx = y * CHAR_WIDTH
+
+							for wx = cx, cx + CHAR_WIDTH - 1 do
+								if wx >= CLIP_X_MIN and wx <= CLIP_X_MAX then
+									const ga = buffer.readu8(glyph, idx)
+									if ga ~= 0 then
+										const offset = init_offset + wx * 4
+										const sa = (src_a * ga + 127) // 255
+										-- Fully opaque: skip the read-modify-write.
+										if sa == 255 then
+											buffer.writeu32(IMAGE, offset, STYLE_COLOR)
+										elseif sa ~= 0 then
+											const dst = buffer.readu32(IMAGE, offset)
+											const da  = bit32.extract(dst, 24, 8)
+											const inv = 255 - sa
+
+											const oa = sa + (da * inv + 127) // 255
+											const or_ = (src_r * sa + bit32.extract(dst,  0, 8) * inv + 127) // 255
+											const og  = (src_g * sa + bit32.extract(dst,  8, 8) * inv + 127) // 255
+											const ob  = (src_b * sa + bit32.extract(dst, 16, 8) * inv + 127) // 255
+
+											buffer.writeu32(
+												IMAGE, offset,
+												bit32.bor(
+													bit32.lshift(oa,  24),
+													bit32.lshift(or_,  0),
+													bit32.lshift(og,   8),
+													bit32.lshift(ob,  16)
+												)
+											)
+										end
+										buffer.writeu32(W, offset, F32_INF)
+									end
+								end
+								idx += 1
+							end
+						end
 					end
 				end
 
-				write_offset += ROW_STRIDE
+				cx += advance
 			end
 
-			init_write_offset += (CHAR_WIDTH + CHAR_PADDING) * 4
 			this_offset, this_code = iterate_codes(text, this_offset)
 		end
 	end
@@ -574,11 +782,14 @@ return function (image: buffer, w: buffer, max_resolution: vector, render_resolu
 		setFont = SET_FONT;
 		setTextSize = SET_TEXT_SIZE;
 		setLineThickness = SET_LINE_THICKNESS;
+		
+		pushClip = PUSH_CLIP;
+		popClip = POP_CLIP;
+		getClipPosition = GET_CLIP_POSITION;
+		getClipBounds = GET_CLIP_BOUNDS;
 
 		line = LINE;
-		triangle = TRIANGLE;
 		rectangle = RECTANGLE;
-		circle = CIRCLE;
 		text = TEXT;
 
 		getRenderResolution = GET_RENDER_RESOLUTION;
