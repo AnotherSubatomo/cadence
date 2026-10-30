@@ -122,10 +122,10 @@
 				const relative_dy = client_dy / rect.height
 
 				// Map to internal canvas resolution pixels (0 to canvas.width/height)
-				x = relative_x * canvas.width
-				y = relative_y * canvas.height
-				delta_x = relative_dx * canvas.width
-				delta_y = relative_dy * canvas.height
+				x = Math.round(relative_x * canvas.width)
+				y = Math.round(relative_y * canvas.height)
+				delta_x = Math.round(relative_dx * canvas.width)
+				delta_y = Math.round(relative_dy * canvas.height)
 			})
 
 			let forward_move = false, back_move = false

@@ -206,8 +206,8 @@ const function main()
 		const relative_y = local_y / rect_size.Y
 
 		-- Map to internal canvas resolution pixels (0 to canvas.width/height)
-		const x = relative_x * view_size.X
-		const y = relative_y * view_size.Y
+		const x = relative_x * view_size.X // 1
+		const y = relative_y * view_size.Y // 1
 		return vector.create(x, y)
 	end
 
