@@ -7,4 +7,4 @@ Platform-agnostic, 3D modeling and texturing program written in pure Luau
 
 *cadence* is a platform-agnostic and runtime-agnostic Luau program for modeling and texturing low-poly 3D models, rendered in a low-resolution style. Inspired by Johan Pietz's [picoCAD](https://johanpeitz.itch.io/picocad), the program aims to make 3D modelling fun, easy, and accessible by focusing on the bare essentials.
 
-*cadence* can be played as a [game on Roblox](), or ran as a [standalone application](). The web renderer visible as `/web/` within this repository is not a technically publishable program (it uses websockets to send the frame buffer to the web client for rendering) and exists solely for testing and debugging purposes.
+*cadence* can be played as a [game on Roblox](), or ran as a [standalone application](). The web renderer used in `/cycle/` is not a technically publishable website (it uses websockets to send the frame buffer to the web client for rendering) and exists solely for rapid testing, prototyping, and debugging purposes.

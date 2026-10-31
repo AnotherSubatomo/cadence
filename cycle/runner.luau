@@ -26,12 +26,11 @@ const fs = require("@std/fs")
 
 type ServerSocket = net.ServerWebSocket
 
-const program = require("./src")
+const program = require("../src")
 const max_resolution = program.max_resolution
 
-const FPS_DELTA = 1/60
-const SITE_PORT = 8000
-const WEBSOCKET_PORT = 8080
+const manifest = require("./manifest")
+const FPS_DELTA = 1 / manifest.fps
 
 local CURRENT_PROGRAM_RUNTIME: thread?
 
@@ -107,25 +106,35 @@ const function on_server_ws_close(ws: ServerSocket, code: number, message: strin
 end
 
 const function handler(request: net.ReceivedRequest, server: net.Server): (net.ServerResponse)
-	return fs.readFileToString('./web/index.html')
+	-- print(`[Server]: Method: {request.method}`)
+	-- for i, v in request.query do print(`[Server]: query.{i}: {v}`) end
+	-- for i, v in request.headers do print(`[Server]: headers.{i}: {v}`) end
+
+	const connection = request.headers.connection
+
+	if connection == "Upgrade" and request.headers.upgrade == "websocket" then
+		const success = server:upgrade(request)
+		if success then
+			print(`[Server]: Connection has been upgraded to a websocket!`)
+		end
+	elseif connection == "Shutdown" then
+		task.delay(manifest.shutdown_delay, server.close)
+		print(`[Server]: Shutting down...`)
+	else
+		return fs.readFileToString('./cycle/index.html')
+	end
+	return { status = 200 }
 end
 
--- Start the site server
-net.server.serve({
-	port = SITE_PORT,
+-- Start the server
+net.server.serve {
+	port = manifest.port,
 	handler = handler,
-})
-
-print(`[Server]: Site is now being hosted at {SITE_PORT}!`)
-
--- Start the server websocket
-net.server.serve({
-	port = WEBSOCKET_PORT,
 	websocket = {
 		open = on_server_ws_open,
 		message = on_server_ws_message,
 		close = on_server_ws_close,
 	}
-})
+}
 
-print(`[Server]: Websocket is now being hosted at {WEBSOCKET_PORT}!`)
+print(`[Server]: Site is now being hosted at {manifest.port}!`)
