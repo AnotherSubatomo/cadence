@@ -19,7 +19,7 @@ const task = require("@std/task")
 const io = require("@std/io")
 
 const PORT_URL = "http://localhost:" .. manifest.port
-const RUNNER_CMD = {'lute', 'run', 'cycle/runner'}
+const RUNNER_CMD = {'lute', 'run', 'cycle/core'}
 
 print("Initiating new cycle session!")
 task.spawn(process.run, RUNNER_CMD, nil)
